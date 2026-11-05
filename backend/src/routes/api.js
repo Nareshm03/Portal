@@ -13,6 +13,7 @@ import { createRazorpayOrder, verifyCheckoutSignature, fetchRazorpayPayment } fr
 import { generateOtp, hashOtp, verifyOtp } from '../services/otp.js';
 import { postCollectionLedger, postSettlementLedger } from '../services/ledger.js';
 import { logger } from '../config/logger.js';
+import { matchesTripToRequest } from '../services/matching.js';
 
 export const apiRouter = Router();
 const supabase = () => getSupabase();
@@ -151,12 +152,7 @@ apiRouter.get('/requests', requireAuth, requireRole('traveller'), async (req, re
   if (!trips?.length) return res.json({ data: [] });
   const { data: requests, error } = await supabase().from('requests').select('*').eq('status', 'OPEN').eq('compliance_status', 'APPROVED').gte('needed_by', new Date().toISOString()).limit(200);
   if (error) throw error;
-  const matches = requests.filter((request) => trips.some((trip) =>
-    trip.origin_airport_code === request.origin_airport_code &&
-    trip.destination_airport_code === request.destination_airport_code &&
-    new Date(trip.departure_at) <= new Date(request.needed_by) && new Date(trip.arrival_at) <= new Date(request.needed_by) &&
-    trip.origin_country === request.origin_country && trip.destination_country === request.destination_country
-  ));
+  const matches = requests.filter((request) => trips.some((trip) => matchesTripToRequest(trip, request)));
   res.json({ data: matches });
 });
 
@@ -170,7 +166,7 @@ apiRouter.post('/requests/:id/quotes', requireAuth, requireRole('traveller'), as
   if (request.status !== 'OPEN') throw new HttpError(409, 'REQUEST_NOT_OPEN', 'This request is not open for quotes.');
   const { data: trip, error: tripError } = await supabase().from('trips').select('*').eq('id', body.tripId).eq('traveller_id', req.user.id).eq('status', 'ACTIVE').single();
   if (tripError || !trip) throw new HttpError(404, 'ACTIVE_TRIP_REQUIRED', 'An active matching trip was not found.');
-  const matches = trip.origin_airport_code === request.origin_airport_code && trip.destination_airport_code === request.destination_airport_code && trip.origin_country === request.origin_country && trip.destination_country === request.destination_country && new Date(trip.departure_at) <= new Date(request.needed_by) && new Date(trip.arrival_at) <= new Date(request.needed_by);
+  const matches = matchesTripToRequest(trip, request);
   if (!matches) throw new HttpError(409, 'TRIP_ROUTE_MISMATCH', 'This trip does not match the request route and date.');
   const fx = getConfiguredRate(body.itemCurrency);
   const converted = convertMinorUnits({ amountMinor: body.itemPriceMinor, fromCurrency: body.itemCurrency, toCurrency: 'INR', ...fx });
@@ -257,7 +253,7 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
   const { data: existing } = await supabase().from('payment_intents').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
   if (existing) {
     if (existing.order_id !== order.id || existing.buyer_id !== req.user.id) throw new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', 'This idempotency key is already bound to another operation.');
-    return res.json({ data: { id: existing.id, provider: existing.provider, providerOrderId: existing.provider_order_id, amountPaise: existing.amount_paise, status: existing.status, mock: existing.provider === 'MOCK' } });
+    return res.json({ data: { id: existing.id, provider: existing.provider, providerOrderId: existing.provider_order_id, amountPaise: existing.amount_paise, status: existing.status, mock: existing.provider === 'MOCK', duplicate: true } });
   }
 
   const provider = env.MOCK_PAYMENTS ? 'MOCK' : 'RAZORPAY';
@@ -277,7 +273,7 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
         .eq('idempotency_key', idempotencyKey).maybeSingle();
       if (retryLookupError) throw retryLookupError;
       if (retryIntent && retryIntent.order_id === order.id && retryIntent.buyer_id === req.user.id) {
-        return res.status(200).json({ data: { id: retryIntent.id, provider: retryIntent.provider, providerOrderId: retryIntent.provider_order_id, amountPaise: retryIntent.amount_paise, status: retryIntent.status, mock: retryIntent.provider === 'MOCK' }, duplicate: true });
+        return res.status(200).json({ data: { id: retryIntent.id, provider: retryIntent.provider, providerOrderId: retryIntent.provider_order_id, amountPaise: retryIntent.amount_paise, status: retryIntent.status, mock: retryIntent.provider === 'MOCK', duplicate: true } });
       }
       throw new HttpError(409, 'PAYMENT_ATTEMPT_EXISTS', 'Another payment attempt is already open for this order. Reuse its idempotency key or wait for reconciliation.');
     }
