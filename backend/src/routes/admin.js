@@ -37,7 +37,7 @@ const supabase = () => getSupabase();
 // All admin routes require authentication and an active admin role.
 adminRouter.use('/admin', requireAuth, requireRole('admin'));
 
-const ORDER_STATES = ['ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED'];
+const ORDER_STATES = ['ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED', 'CANCELLED', 'REFUNDED'];
 const PAYMENT_STATUSES = ['CREATING', 'CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'];
 
 /* ------------------------------------------------------------------

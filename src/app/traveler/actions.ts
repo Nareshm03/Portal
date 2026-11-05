@@ -1,11 +1,12 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { createClient as createServerClient } from "@/lib/supabase/server";
 import type { AuthFormState } from "@/lib/auth/form-state";
 import {
-  signInTraveler,
-  signOutTraveler,
-  signUpTraveler,
+  signInTraveller,
+  signOutTraveller,
+  signUpTraveller,
 } from "@/lib/auth/traveler";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -26,6 +27,8 @@ function errorState(
 ): AuthFormState {
   return { status: "error", message, fieldErrors };
 }
+
+const serverClient = createServerClient();
 
 export async function loginTravelerAction(
   _previous: AuthFormState,
@@ -49,7 +52,7 @@ export async function loginTravelerAction(
     return errorState(fieldErrors);
   }
 
-  const result = await signInTraveler({ email, password });
+  const result = await signInTraveller({ email, password }, serverClient);
 
   if (!result.ok) {
     return {
@@ -141,11 +144,10 @@ export async function registerTravelerAction(
    * profile and passport fields are validated for the demo but deliberately
    * not persisted: there is no profile or KYC store in this prototype.
    */
-  const result = await signUpTraveler({
-    name: fullName,
-    email,
-    password,
-  });
+  const result = await signUpTraveller(
+    { name: fullName, email, password },
+    serverClient
+  );
 
   if (!result.ok) {
     if (result.error === "email-taken") {
@@ -166,6 +168,6 @@ export async function registerTravelerAction(
 }
 
 export async function signOutTravelerAction(): Promise<void> {
-  await signOutTraveler();
+  await signOutTraveller(serverClient);
   redirect("/traveler/login");
 }

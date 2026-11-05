@@ -37,6 +37,16 @@ export function createMockSupabase(tables = {}) {
       callLog.from.push({ table: tableName, cols: selectCols, filters });
       let rows = Array.isArray(response.data) ? response.data : [response.data];
       rows = applyFilters(rows);
+      // Apply a pending update to the filtered rows (Supabase applies WHERE before SET).
+      if (pendingUpdatePayload) {
+        rows = rows.map((row) => ({ ...row, ...pendingUpdatePayload }));
+        if (Array.isArray(response.data)) {
+          response.data = response.data.map((row) =>
+            rows.some((r) => r.id === row.id) ? { ...row, ...pendingUpdatePayload } : row
+          );
+        }
+        pendingUpdatePayload = null;
+      }
       // Capture the total matching count before any range/limit slicing.
       const totalCount = rows.length;
       if (offsetN > 0) rows = rows.slice(offsetN);
@@ -85,14 +95,11 @@ export function createMockSupabase(tables = {}) {
       }
     };
 
+    let pendingUpdatePayload = null;
+
     chain.update = (payload) => {
       callLog.update.push({ table: tableName, payload, filters });
-      updatePayload = payload;
-      if (Array.isArray(response.data)) {
-        response.data = response.data.map((row) =>
-          applyFilters([row]).length > 0 ? { ...row, ...payload } : row
-        );
-      }
+      pendingUpdatePayload = payload;
       return chain;
     };
 
@@ -269,8 +276,8 @@ export function tripRow(id, travellerId, status = 'ACTIVE', extra = {}) {
   };
 }
 
-export function profileRow(id, role = 'buyer', accountStatus = 'ACTIVE', kycStatus = 'VERIFIED') {
-  return { id, role, account_status: accountStatus, kyc_status: kycStatus, full_name: 'Test User' };
+export function profileRow(id, role = 'buyer', accountStatus = 'ACTIVE', kycStatus = 'VERIFIED', phoneE164 = null, phoneVerified = false) {
+  return { id, role, account_status: accountStatus, kyc_status: kycStatus, full_name: 'Test User', phone_e164: phoneE164, phone_verified: phoneVerified };
 }
 
 export { testUuid };

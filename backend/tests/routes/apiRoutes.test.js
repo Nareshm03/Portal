@@ -15,6 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { createMockSupabase, orderRow, intentRow, quoteRow, requestRow, tripRow, profileRow, future, past, testUuid } from '../helpers/mockSupabase.js';
 import { createRouteTester, injectDb } from '../helpers/routeTester.js';
 import { hashOtp } from '../../src/services/otp.js';
@@ -452,6 +453,75 @@ test('POST /api/v1/payments/verify - payment intent not found', async (t) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Section 4.1: Checkout signature uses server-stored order ID        */
+/* ------------------------------------------------------------------ */
+
+test('HMAC signature includes the order ID in the signed message', async (t) => {
+  const serverOrderId = 'ord_server_trusted_' + testUuid(1);
+  const clientOrderId = 'ord_client_supplied_different_' + testUuid(2);
+  const paymentId = 'pay_1234567890';
+  const secret = 'test_razorpay_secret_for_unit_tests_1234567890';
+
+  // Valid HMAC computed over the server-stored order ID
+  const serverSig = createHmac('sha256', secret).update(`${serverOrderId}|${paymentId}`).digest('hex');
+  // HMAC computed over a different client-supplied order ID
+  const clientSig = createHmac('sha256', secret).update(`${clientOrderId}|${paymentId}`).digest('hex');
+
+  // Different order IDs produce different signatures, proving order ID is in the signed message.
+  // The route now passes intent.provider_order_id (server-stored) to verifyCheckoutSignature,
+  // not body.providerOrderId (client-supplied), per the Razorpay contract.
+  assert.notEqual(serverSig, clientSig);
+});
+
+test('HMAC signature is deterministic for the same server-stored order ID', async (t) => {
+  const serverOrderId = 'ord_server_trusted_' + testUuid(3);
+  const paymentId = 'pay_9876543210';
+  const secret = 'test_razorpay_secret_for_unit_tests_1234567890';
+
+  const sig1 = createHmac('sha256', secret).update(`${serverOrderId}|${paymentId}`).digest('hex');
+  const sig2 = createHmac('sha256', secret).update(`${serverOrderId}|${paymentId}`).digest('hex');
+
+  assert.equal(sig1, sig2);
+});
+
+test('POST /api/v1/payments/verify - tampered Razorpay signature rejected even with matching order IDs', async (t) => {
+  const serverOrderId = 'rzr_order_tampered_' + testUuid(6);
+  const paymentId = 'rzr_pay_tampered_' + testUuid(7);
+
+  injectDb(createMockSupabase({
+    payment_intents: {
+      data: [{
+        id: INTENT_ID, order_id: ORDER_ID, buyer_id: BUYER_ID, provider: 'RAZORPAY',
+        provider_order_id: serverOrderId, provider_payment_id: null,
+        idempotency_key: 'idem_' + INTENT_ID, amount_paise: 42_000, currency: 'INR', status: 'CREATING',
+        raw_provider_reference: null
+      }],
+      error: null
+    },
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future)],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+
+  const res = await rt.post('/payments/verify', {
+    authorization: buyerToken()
+  }, {
+    paymentIntentId: INTENT_ID,
+    providerOrderId: serverOrderId,
+    paymentId,
+    signature: '00'.repeat(32)
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error.code, 'PAYMENT_SIGNATURE_INVALID');
+});
+
+/* ------------------------------------------------------------------ */
 /* Section 5: Order lifecycle transitions                             */
 /* ------------------------------------------------------------------ */
 
@@ -709,6 +779,168 @@ test('POST /api/v1/orders/:id/handover/verify - already completed order returns 
   }, { code: '123456' });
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.state, 'COMPLETED');
+});
+
+test('POST /api/v1/orders/:id/handover/verify - expired OTP rejected', async (t) => {
+  const code = '123456';
+  const otpHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code, pepper: env.OTP_PEPPER });
+
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LANDED', 42_000, future)],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    },
+    otp_challenges: {
+      data: [{ id: 'ch-expired', order_id: ORDER_ID, recipient_user_id: BUYER_ID, otp_hash: otpHash, attempts: 0, consumed_at: null, expires_at: past }],
+      error: null
+    }
+  }));
+
+  const res = await rt.post(`/orders/${ORDER_ID}/handover/verify`, {
+    authorization: buyerToken()
+  }, { code });
+
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.error.code, 'OTP_REQUIRED');
+});
+
+test('POST /api/v1/orders/:id/handover/verify - maximum attempts enforced', async (t) => {
+  const code = '123456';
+  const otpHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code, pepper: env.OTP_PEPPER });
+
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LANDED', 42_000, future)],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    },
+    otp_challenges: {
+      data: [{ id: 'ch-max', order_id: ORDER_ID, recipient_user_id: BUYER_ID, otp_hash: otpHash, attempts: 5, consumed_at: null, expires_at: future }],
+      error: null
+    }
+  }));
+
+  // First attempt: max reached, should reject and increment attempts to 6
+  const res1 = await rt.post(`/orders/${ORDER_ID}/handover/verify`, {
+    authorization: buyerToken()
+  }, { code });
+  assert.equal(res1.statusCode, 401);
+  assert.equal(res1.body.error.code, 'OTP_INVALID');
+
+  // Second attempt: still maxed out, should reject again
+  const res2 = await rt.post(`/orders/${ORDER_ID}/handover/verify`, {
+    authorization: buyerToken()
+  }, { code });
+  assert.equal(res2.statusCode, 401);
+  assert.equal(res2.body.error.code, 'OTP_INVALID');
+});
+
+/* ------------------------------------------------------------------ */
+/* Section 6b: OTP production security hardening                      */
+/* ------------------------------------------------------------------ */
+
+test('issue-otp in development preserves existing demo behaviour (returns code)', async () => {
+  const origEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'development';
+  try {
+    injectDb(createMockSupabase({
+      orders: { data: [orderRow(ORDER_ID, BUYER_ID, 'LANDED', 42_000, future, null, { traveller_id: TRAVELLER_ID })], error: null },
+      profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+      otp_challenges: { data: [], error: null },
+    }));
+    const res = await rt.post(`/orders/${ORDER_ID}/handover/issue-otp`, { authorization: buyerToken() });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.demo, true);
+    assert.ok(res.body.code, 'development mode must return the code');
+    assert.equal(res.body.code.length, 6);
+    assert.equal(res.body.data.recipient, 'buyer');
+  } finally {
+    process.env.NODE_ENV = origEnv;
+  }
+});
+
+test('issue-otp in production never returns a plaintext OTP', async () => {
+  const origEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    injectDb(createMockSupabase({
+      orders: { data: [orderRow(ORDER_ID, BUYER_ID, 'LANDED', 42_000, future, null, { traveller_id: TRAVELLER_ID })], error: null },
+      profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+      otp_challenges: { data: [], error: null },
+    }));
+    const res = await rt.post(`/orders/${ORDER_ID}/handover/issue-otp`, { authorization: buyerToken() });
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.body.error.code, 'OTP_DELIVERY_UNAVAILABLE');
+    assert.ok(!res.body.code, 'production must never return a plaintext OTP code');
+    assert.ok(!res.body.demo, 'production must not set demo flag');
+    assert.ok(!res.body.data, 'production must not return challenge data');
+  } finally {
+    process.env.NODE_ENV = origEnv;
+  }
+});
+
+test('issue-otp in production without a delivery provider fails safely (no challenge left behind)', async () => {
+  const origEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    // Track whether an otp_challenges insert was attempted.
+    let insertAttempted = false;
+    const db = createMockSupabase({
+      orders: { data: [orderRow(ORDER_ID, BUYER_ID, 'LANDED', 42_000, future, null, { traveller_id: TRAVELLER_ID })], error: null },
+      profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+      otp_challenges: {
+        data: [],
+        error: null,
+      },
+    });
+    // Wrap the insert to detect if it was called (it should NOT be in production).
+    const origFrom = db.from;
+    db.from = (table) => {
+      const chain = origFrom(table);
+      if (table === 'otp_challenges') {
+        const origInsert = chain.insert;
+        chain.insert = (...args) => { insertAttempted = true; return origInsert(...args); };
+      }
+      return chain;
+    };
+    injectDb(db);
+    const res = await rt.post(`/orders/${ORDER_ID}/handover/issue-otp`, { authorization: buyerToken() });
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.body.error.code, 'OTP_DELIVERY_UNAVAILABLE');
+    assert.equal(insertAttempted, false,
+      'production must not insert an otp_challenge — no unusable active challenge left behind');
+  } finally {
+    process.env.NODE_ENV = origEnv;
+  }
+});
+
+test('issue-otp in production then verify rejects (no challenge exists)', async () => {
+  const origEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    // First: production issue-otp fails (503, no challenge created).
+    injectDb(createMockSupabase({
+      orders: { data: [orderRow(ORDER_ID, BUYER_ID, 'LANDED', 42_000, future, null, { traveller_id: TRAVELLER_ID })], error: null },
+      profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+      otp_challenges: { data: [], error: null },
+    }));
+    const issueRes = await rt.post(`/orders/${ORDER_ID}/handover/issue-otp`, { authorization: buyerToken() });
+    assert.equal(issueRes.statusCode, 503);
+
+    // Second: verify with any code fails because no challenge was created.
+    const verifyRes = await rt.post(`/orders/${ORDER_ID}/handover/verify`, { authorization: buyerToken() }, { code: '123456' });
+    assert.equal(verifyRes.statusCode, 409);
+    assert.equal(verifyRes.body.error.code, 'OTP_REQUIRED');
+  } finally {
+    process.env.NODE_ENV = origEnv;
+  }
 });
 
 /* ------------------------------------------------------------------ */

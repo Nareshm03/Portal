@@ -92,3 +92,28 @@ export async function postSettlementLedger(supabaseClient, order, actorId) {
     entries
   });
 }
+
+/**
+ * Refund reversal journal posted when a captured payment is refunded.
+ * Reverses the PAYMENT_CAPTURED collection: debits ESCROW_HOLD (releasing
+ * the held funds) and credits PAYMENT_CLEARING (returning funds to the buyer).
+ * Zero-amount refunds are rejected because the RPC requires a balanced,
+ * >=2-entry journal.
+ */
+export async function postRefundLedger(supabaseClient, order, actorId, refundAmountPaise) {
+  const upfrontPaise = Number(order.upfront_paise);
+  const refundPaise = Number(refundAmountPaise);
+  if (!Number.isSafeInteger(refundPaise) || refundPaise <= 0) throw new HttpError(400, 'INVALID_REFUND_AMOUNT', 'Refund amount must be a positive integer.');
+  if (refundPaise > upfrontPaise) throw new HttpError(409, 'REFUND_EXCEEDS_CAPTURED', `Refund amount ${refundPaise} exceeds captured upfront ${upfrontPaise}.`);
+  await postLedger(supabaseClient, {
+    orderId: order.id,
+    eventType: 'PAYMENT_REFUNDED',
+    idempotencyKey: `order:refund:${order.id}`,
+    actorId,
+    metadata: { provider: order.provider ?? 'MOCK', description: 'Payment refund reversed on order cancellation', refundAmountPaise: refundPaise },
+    entries: [
+      { accountCode: 'ESCROW_HOLD', direction: 'DEBIT', amountPaise: refundPaise },
+      { accountCode: 'PAYMENT_CLEARING', direction: 'CREDIT', amountPaise: refundPaise }
+    ]
+  });
+}

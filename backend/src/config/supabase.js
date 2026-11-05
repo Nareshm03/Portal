@@ -4,9 +4,14 @@ import { env } from './env.js';
 let client;
 export function getSupabase() {
   // Test injection: allow a fake Supabase client to be substituted for unit/route testing.
-  // This global is only set by test files and has no effect in production.
-  const testDb = globalThis.__portal_test_db__;
-  if (testDb) return testDb;
+  // NEVER allow test injection in production — that would bypass real database controls.
+  // Use env.NODE_ENV (frozen at module load) rather than process.env.NODE_ENV (mutable at
+  // runtime) so that tests toggling NODE_ENV still work, while real production deployments
+  // (where NODE_ENV=production is set before the server starts) are protected.
+  if (env.NODE_ENV !== 'production') {
+    const testDb = globalThis.__portal_test_db__;
+    if (testDb) return testDb;
+  }
 
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
     const error = new Error('Supabase is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to .env.');

@@ -13,7 +13,8 @@
     "test:watch": "node --test --watch --test-concurrency=1",
     "check": "node --check src/index.js && node --test --test-concurrency=1",
     "expire-orders": "node src/jobs/expireOrders.js",
-    "reconcile-payments": "node src/jobs/reconcilePayments.js"
+    "reconcile-payments": "node src/jobs/reconcilePayments.js",
+    "worker": "node src/worker.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
