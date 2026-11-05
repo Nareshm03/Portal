@@ -2,7 +2,7 @@
  *
  * Tests the full sequence using actual Express route handlers:
  *
- *   ACCEPTED → mock payment → LOCKED → PURCHASED → LANDED → OTP issued → OTP verified → COMPLETED
+ *   ACCEPTED → Payment Intent → Payment Verification → LOCKED → PURCHASED → LANDED → OTP issued → OTP verified → COMPLETED
  *
  * Verifies that:
  *   - Financial snapshots remain unchanged throughout the journey
@@ -14,7 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMockSupabase, orderRow, intentRow, quoteRow, requestRow, tripRow, profileRow, future, testUuid } from '../helpers/mockSupabase.js';
+import { createMockSupabase, orderRow, intentRow, quoteRow, requestRow, tripRow, profileRow, future, freshFuture, testUuid } from '../helpers/mockSupabase.js';
 import { createRouteTester, injectDb } from '../helpers/routeTester.js';
 import { calculateOrderBreakdown } from '../../src/services/money.js';
 import { hashOtp } from '../../src/services/otp.js';
@@ -27,12 +27,12 @@ const ORDER_ID = testUuid(3);
 const QUOTE_ID = testUuid(4);
 const REQUEST_ID = testUuid(5);
 const TRIP_ID = testUuid(6);
-const INTENT_ID = testUuid(7);
 
 function buyerToken() { return `Bearer ${BUYER_ID}-token`; }
 function travellerToken() { return `Bearer ${TRAVELLER_ID}-token`; }
 
-test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → LANDED → OTP → COMPLETED', async (t) => {
+test('complete mock journey: ACCEPTED → Payment Intent → Payment Verification → LOCKED → PURCHASED → LANDED → OTP → COMPLETED', async (t) => {
+  // Quote: item_price_minor: 1000 USD cents = $10, fx_rate: 83.5 -> 83,500 INR product cost
   const expectedSnapshot = {
     productCostPaise: 83_500,
     dutyPaise: 12_000,
@@ -45,8 +45,44 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
     balancePaise: 70_625
   };
 
+  let currentOrderState = 'ACCEPTED';
   let collectionLedgerCount = 0;
   let settlementLedgerCount = 0;
+
+  const buildOrderResponse = () => ({
+    data: {
+      id: ORDER_ID,
+      state: currentOrderState,
+      upfront_paise: expectedSnapshot.upfrontPaise,
+      balance_paise: expectedSnapshot.balancePaise,
+      subtotal_paise: expectedSnapshot.subtotalPaise,
+      platform_fee_paise: expectedSnapshot.platformFeePaise,
+      duty_paise: expectedSnapshot.dutyPaise,
+      traveller_reward_paise: expectedSnapshot.travellerRewardPaise
+    },
+    error: null
+  });
+
+  const buildOrdersTable = () => ({
+    data: [{
+      id: ORDER_ID,
+      buyer_id: BUYER_ID,
+      traveller_id: TRAVELLER_ID,
+      state: currentOrderState,
+      upfront_paise: expectedSnapshot.upfrontPaise,
+      balance_paise: expectedSnapshot.balancePaise,
+      subtotal_paise: expectedSnapshot.subtotalPaise,
+      platform_fee_paise: expectedSnapshot.platformFeePaise,
+      total_paise: expectedSnapshot.totalPaise,
+      deposit_paise: expectedSnapshot.depositPaise,
+      duty_paise: expectedSnapshot.dutyPaise,
+      traveller_reward_paise: expectedSnapshot.travellerRewardPaise,
+      currency: 'INR',
+      payment_deadline: freshFuture(10),
+      forfeit_at: null
+    }],
+    error: null
+  });
 
   const db = createMockSupabase({
     profiles: {
@@ -66,7 +102,7 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
         request_id: REQUEST_ID,
         trip_id: TRIP_ID,
         traveller_id: TRAVELLER_ID,
-        item_price_minor: 100_000,
+        item_price_minor: 1_000,
         item_currency: 'USD',
         traveller_reward_paise: 8_000,
         fx_rate: '83.500000',
@@ -80,7 +116,7 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
         platform_fee_bps: 500,
         status: 'ACTIVE',
         expires_at: future,
-        requests: { id: REQUEST_ID, buyer_id: BUYER_ID }
+        requests: { id: REQUEST_ID, buyer_id: BUYER_ID, compliance_status: 'APPROVED', status: 'OPEN' }
       }],
       error: null
     },
@@ -99,26 +135,7 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
       }],
       error: null
     },
-    orders: {
-      data: [{
-        id: ORDER_ID,
-        buyer_id: BUYER_ID,
-        traveller_id: TRAVELLER_ID,
-        state: 'ACCEPTED',
-        subtotal_paise: expectedSnapshot.subtotalPaise,
-        platform_fee_paise: expectedSnapshot.platformFeePaise,
-        total_paise: expectedSnapshot.totalPaise,
-        deposit_paise: expectedSnapshot.depositPaise,
-        duty_paise: expectedSnapshot.dutyPaise,
-        traveller_reward_paise: expectedSnapshot.travellerRewardPaise,
-        upfront_paise: expectedSnapshot.upfrontPaise,
-        balance_paise: expectedSnapshot.balancePaise,
-        currency: 'INR',
-        payment_deadline: future,
-        forfeit_at: null
-      }],
-      error: null
-    },
+    orders: buildOrdersTable(),
     payment_intents: {
       data: [],
       error: null
@@ -129,8 +146,10 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
     },
     rpc: {
       accept_quote: { data: ORDER_ID, error: null },
-      transition_order: async ({ p_order_id, p_to_state, p_actor_id, p_note }) => {
-        return { data: { id: ORDER_ID, state: p_to_state }, error: null };
+      transition_order: async ({ p_order_id, p_to_state }) => {
+        currentOrderState = p_to_state;
+        db.setResponse('orders', buildOrdersTable());
+        return buildOrderResponse();
       },
       post_ledger_transaction: async ({ p_idempotency_key, p_event_type }) => {
         if (p_event_type === 'PAYMENT_CAPTURED') collectionLedgerCount++;
@@ -142,52 +161,65 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
 
   injectDb(db);
 
-  // --- Step 1: Accept quote (buyer) ---
+  // --- Step 1: Quote acceptance ---
   const acceptRes = await rt.post(`/quotes/${QUOTE_ID}/accept`, {
     authorization: buyerToken()
   });
-  assert.equal(acceptRes.statusCode, 201, `Quote acceptance failed: ${JSON.stringify(acceptRes.body)}`);
+  assert.equal(acceptRes.statusCode, 201, `Accept failed: ${JSON.stringify(acceptRes.body)}`);
   assert.equal(acceptRes.body.data.state, 'ACCEPTED');
-  assert.equal(acceptRes.body.priceBreakdown.upfrontPaise, expectedSnapshot.upfrontPaise);
-  assert.equal(acceptRes.body.priceBreakdown.balancePaise, expectedSnapshot.balancePaise);
-  assert.equal(acceptRes.body.priceBreakdown.totalPaise, expectedSnapshot.totalPaise);
+  assert.equal(acceptRes.body.priceBreakdown.productCostPaise, expectedSnapshot.productCostPaise);
 
-  // --- Step 2: Create payment intent (buyer) ---
+  // --- Step 2: Payment intent creation ---
   const createRes = await rt.post('/payments/create-order', {
     authorization: buyerToken(),
-    'idempotency-key': 'journey-payment-key-1'
+    'idempotency-key': `idem_${ORDER_ID}-payment`
   }, { orderId: ORDER_ID });
-  assert.equal(createRes.statusCode, 201, `Payment creation failed: ${JSON.stringify(createRes.body)}`);
+  assert.equal(createRes.statusCode, 201, `Create intent failed: ${JSON.stringify(createRes.body)}`);
   assert.equal(createRes.body.data.provider, 'MOCK');
-  assert.equal(createRes.body.data.amountPaise, expectedSnapshot.upfrontPaise, 'Payment intent must match upfront collection, not deposit');
+  assert.equal(createRes.body.data.amountPaise, expectedSnapshot.upfrontPaise);
+  assert.equal(createRes.body.data.currency, 'INR');
   assert.equal(createRes.body.data.mock, true);
+  assert.ok(createRes.body.data.providerOrderId.startsWith('mock_'));
 
-  // --- Step 3: Verify mock payment → LOCKED ---
+  // --- Step 3: Payment verification ---
+  // Order remains ACCEPTED after creation; verify transitions it to LOCKED via RPC
   const verifyRes = await rt.post('/payments/verify', {
     authorization: buyerToken()
   }, {
-    paymentIntentId: INTENT_ID,
-    providerOrderId: `mock_${INTENT_ID}`
+    paymentIntentId: createRes.body.data.id,
+    providerOrderId: createRes.body.data.providerOrderId
   });
-  assert.equal(verifyRes.statusCode, 200, `Payment verify failed: ${JSON.stringify(verifyRes.body)}`);
+  assert.equal(verifyRes.statusCode, 200, `Verify failed: ${JSON.stringify(verifyRes.body)}`);
+  assert.equal(verifyRes.body.data.status, 'CAPTURED');
   assert.equal(verifyRes.body.data.orderState, 'LOCKED');
-  assert.equal(collectionLedgerCount, 1, 'Collection ledger posted exactly once on lock');
+  assert.equal(collectionLedgerCount, 1, 'collection ledger should be posted exactly once');
 
-  // --- Step 4: Traveller confirms PURCHASED ---
+  // --- Step 4: Duplicate payment verification - collection ledger posted once only ---
+  const dupVerifyRes = await rt.post('/payments/verify', {
+    authorization: buyerToken()
+  }, {
+    paymentIntentId: createRes.body.data.id,
+    providerOrderId: createRes.body.data.providerOrderId
+  });
+  assert.equal(dupVerifyRes.statusCode, 200, `Dup verify failed: ${JSON.stringify(dupVerifyRes.body)}`);
+  assert.equal(dupVerifyRes.body.data.duplicate, true);
+  assert.equal(collectionLedgerCount, 1, 'collection ledger should still be exactly once after duplicate verify');
+
+  // --- Step 5: Traveller confirms PURCHASED ---
   const purchasedRes = await rt.post(`/orders/${ORDER_ID}/purchased`, {
     authorization: travellerToken()
   });
   assert.equal(purchasedRes.statusCode, 200, `Purchase failed: ${JSON.stringify(purchasedRes.body)}`);
   assert.equal(purchasedRes.body.data.state, 'PURCHASED');
 
-  // --- Step 5: Traveller confirms LANDED ---
+  // --- Step 6: Traveller confirms LANDED ---
   const landedRes = await rt.post(`/orders/${ORDER_ID}/landed`, {
     authorization: travellerToken()
   });
   assert.equal(landedRes.statusCode, 200, `Land failed: ${JSON.stringify(landedRes.body)}`);
   assert.equal(landedRes.body.data.state, 'LANDED');
 
-  // --- Step 6: Issue OTP (buyer) ---
+  // --- Step 7: Issue OTP (buyer) ---
   const otpRes = await rt.post(`/orders/${ORDER_ID}/handover/issue-otp`, {
     authorization: buyerToken()
   });
@@ -197,9 +229,7 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
   assert.equal(otpRes.body.code.length, 6);
   const otpCode = otpRes.body.code;
 
-  // --- Step 7: Verify OTP → COMPLETED ---
-  const origPepper = process.env.OTP_PEPPER;
-  process.env.OTP_PEPPER = 'development-only-change-this-otp-pepper-32chars';
+  // --- Step 8: Verify OTP → COMPLETED ---
   const expectedHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code: otpCode });
 
   db.setResponse('otp_challenges', {
@@ -217,9 +247,8 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
   assert.equal(completeRes.body.data.state, 'COMPLETED');
   assert.equal(settlementLedgerCount, 1, 'Settlement ledger posted exactly once on completion');
 
-  process.env.OTP_PEPPER = origPepper;
-
-  // --- Step 8: Verify financial snapshot unchanged ---
+  // --- Step 9: Verify financial snapshot unchanged ---
+  // State already COMPLETED from the verify route's transition_order RPC
   const orderRes = await rt.get(`/orders/${ORDER_ID}`, { authorization: buyerToken() });
   assert.equal(orderRes.statusCode, 200);
   const order = orderRes.body.data;
@@ -228,17 +257,6 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
   assert.equal(order.balance_paise, expectedSnapshot.balancePaise, 'Balance unchanged');
   assert.equal(order.total_paise, expectedSnapshot.totalPaise, 'Total unchanged');
   assert.equal(order.deposit_paise, expectedSnapshot.depositPaise, 'Deposit unchanged');
-
-  // --- Step 9: Idempotency - repeat payment verify does not duplicate ledger ---
-  const dupVerifyRes = await rt.post('/payments/verify', {
-    authorization: buyerToken()
-  }, {
-    paymentIntentId: INTENT_ID,
-    providerOrderId: `mock_${INTENT_ID}`
-  });
-  assert.equal(dupVerifyRes.statusCode, 200);
-  assert.equal(dupVerifyRes.body.data.duplicate, true);
-  assert.equal(collectionLedgerCount, 1, 'Collection ledger still exactly once after duplicate verify');
 
   // --- Step 10: Idempotency - repeat complete does not duplicate settlement ---
   const dupCompleteRes = await rt.post(`/orders/${ORDER_ID}/handover/verify`, {

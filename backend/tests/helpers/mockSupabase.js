@@ -17,6 +17,7 @@ export function createMockSupabase(tables = {}) {
     let selectCols = '*';
     const filters = [];
     let limitN = null;
+    let offsetN = 0;
     let updatePayload = null;
     let insertPayload = null;
 
@@ -35,7 +36,9 @@ export function createMockSupabase(tables = {}) {
       callLog.from.push({ table: tableName, cols: selectCols, filters });
       let rows = Array.isArray(response.data) ? response.data : [response.data];
       rows = applyFilters(rows);
-      if (limitN !== null) rows = rows.slice(0, limitN);
+      // Apply offset and limit for pagination
+      if (limitN !== null) rows = rows.slice(offsetN, offsetN + limitN);
+      else if (offsetN > 0) rows = rows.slice(offsetN);
       // If selectCols contains '*', return full rows; otherwise project columns
       const cols = selectCols.split(',').map((c) => c.trim());
       if (cols.includes('*')) return { data: rows, error: response.error ?? null };
@@ -92,14 +95,20 @@ export function createMockSupabase(tables = {}) {
       callLog.insert.push({ table: tableName, payload });
       insertPayload = payload;
       if (!Array.isArray(response.data)) response.data = [];
-      response.data.push({ ...payload, id: payload.id });
+      // Push the inserted row with all fields from payload
+      const newRow = { ...payload };
+      response.data.push(newRow);
+      // Update the tables object reference so subsequent calls see the new row
+      tables[tableName] = response;
       return chain;
     };
 
-    chain.delete = async () => {
+    chain.delete = () => {
       callLog.delete.push({ table: tableName, filters });
       if (Array.isArray(response.data)) {
         response.data = response.data.filter((row) => applyFilters([row]).length === 0);
+      } else if (response.data) {
+        response.data = null;
       }
       return chain;
     };
@@ -121,8 +130,12 @@ export function createMockSupabase(tables = {}) {
     rpc(funcName, params) {
       callLog.rpc.push({ funcName, params });
       const response = tables.rpc ?? {};
-      const result = response[funcName] ?? { data: null, error: null };
-      return Promise.resolve(result);
+      const rpcResponse = response[funcName];
+      // If the response is a function, call it with params
+      if (typeof rpcResponse === 'function') {
+        return rpcResponse(params);
+      }
+      return Promise.resolve(rpcResponse ?? { data: null, error: null });
     },
     auth: {
       getUser: authGetUser
@@ -148,6 +161,7 @@ export function createMockSupabase(tables = {}) {
 
 export const past = new Date(Date.now() - 60_000).toISOString();
 export const future = new Date(Date.now() + 60_000).toISOString();
+export function freshFuture(minutes = 10) { return new Date(Date.now() + minutes * 60_000).toISOString(); }
 
 // Generate UUIDv4-compatible IDs for z.string().uuid() validation
 // UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (y = 8,9,a,b)
@@ -183,7 +197,7 @@ export function quoteRow(id, requestId, tripId, travellerId, status = 'ACTIVE', 
     duty_reviewed_at: dutyApproved ? new Date().toISOString() : null,
     duty_assessment_reference: dutyApproved ? 'REF-001' : null,
     platform_fee_bps: 500, status, expires_at: expiresAt,
-    requests: { id: requestId, buyer_id: buyerId }
+    requests: { id: requestId, buyer_id: buyerId, compliance_status: 'APPROVED', status: 'OPEN' }
   };
 }
 
