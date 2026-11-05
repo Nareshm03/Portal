@@ -268,3 +268,44 @@ test('buildListRow includes key fields but not sensitive columns', () => {
   assert.ok(!('full_name' in row));
   assert.ok(!('email' in row));
 });
+
+/* ================================================================== */
+/* PARTIALLY_REFUNDED status mapping (Fix: explicit branch)           */
+/* ================================================================== */
+
+test('buildTransactionSummary: PARTIALLY_REFUNDED intent returns PARTIALLY_REFUNDED', () => {
+  const o = mkOrder('o1', 'LOCKED');
+  const intents = [{ ...mkIntent('i1', 'o1', 'PARTIALLY_REFUNDED', UPFRONT) }];
+  const s = buildTransactionSummary(o, intents, []);
+  assert.equal(s.paymentStatus, 'PARTIALLY_REFUNDED',
+    'PARTIALLY_REFUNDED must not fall through to UNKNOWN');
+  assert.notEqual(s.paymentStatus, 'UNKNOWN');
+});
+
+test('buildTransactionSummary: PARTIALLY_REFUNDED takes precedence over REFUNDED when mixed', () => {
+  const o = mkOrder('o1', 'LOCKED');
+  // Mixed intents: one partially refunded and one fully refunded.
+  // PARTIALLY_REFUNDED branch is checked first; should win.
+  const intents = [
+    { ...mkIntent('i1', 'o1', 'PARTIALLY_REFUNDED', UPFRONT) },
+    { ...mkIntent('i2', 'o1', 'REFUNDED', UPFRONT) },
+  ];
+  const s = buildTransactionSummary(o, intents, intents);
+  assert.equal(s.paymentStatus, 'PARTIALLY_REFUNDED');
+});
+
+test('buildTransactionSummary: REFUNDED still maps when no PARTIALLY_REFUNDED', () => {
+  const o = mkOrder('o1', 'LOCKED');
+  const intents = [mkIntent('i1', 'o1', 'REFUNDED', UPFRONT)];
+  const s = buildTransactionSummary(o, intents, []);
+  assert.equal(s.paymentStatus, 'REFUNDED');
+});
+
+test('buildTransactionSummary: dead code removed — no LOCKED_OR_AFTER in scope', () => {
+  // Verify the function still returns the correct financial shape after dead-code removal.
+  const o = mkOrder('o1', 'ACCEPTED');
+  const s = buildTransactionSummary(o, [], []);
+  assert.equal(s.paymentStatus, 'NONE');
+  assert.ok(typeof s.financials === 'object');
+  assert.equal(s.financials.currency, 'INR');
+});

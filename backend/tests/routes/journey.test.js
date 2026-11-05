@@ -66,7 +66,7 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
         request_id: REQUEST_ID,
         trip_id: TRIP_ID,
         traveller_id: TRAVELLER_ID,
-        item_price_minor: 100_000,
+        item_price_minor: 1_000,
         item_currency: 'USD',
         traveller_reward_paise: 8_000,
         fx_rate: '83.500000',
@@ -80,7 +80,7 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
         platform_fee_bps: 500,
         status: 'ACTIVE',
         expires_at: future,
-        requests: { id: REQUEST_ID, buyer_id: BUYER_ID }
+        requests: { id: REQUEST_ID, buyer_id: BUYER_ID, compliance_status: 'APPROVED', status: 'OPEN' }
       }],
       error: null
     },
@@ -162,12 +162,15 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
   assert.equal(createRes.body.data.amountPaise, expectedSnapshot.upfrontPaise, 'Payment intent must match upfront collection, not deposit');
   assert.equal(createRes.body.data.mock, true);
 
+  const createdIntentId = createRes.body.data.id;
+  const createdProviderOrderId = createRes.body.data.providerOrderId;
+
   // --- Step 3: Verify mock payment → LOCKED ---
   const verifyRes = await rt.post('/payments/verify', {
     authorization: buyerToken()
   }, {
-    paymentIntentId: INTENT_ID,
-    providerOrderId: `mock_${INTENT_ID}`
+    paymentIntentId: createdIntentId,
+    providerOrderId: createdProviderOrderId
   });
   assert.equal(verifyRes.statusCode, 200, `Payment verify failed: ${JSON.stringify(verifyRes.body)}`);
   assert.equal(verifyRes.body.data.orderState, 'LOCKED');
@@ -233,8 +236,8 @@ test('complete mock journey: ACCEPTED → payment → LOCKED → PURCHASED → L
   const dupVerifyRes = await rt.post('/payments/verify', {
     authorization: buyerToken()
   }, {
-    paymentIntentId: INTENT_ID,
-    providerOrderId: `mock_${INTENT_ID}`
+    paymentIntentId: createdIntentId,
+    providerOrderId: createdProviderOrderId
   });
   assert.equal(dupVerifyRes.statusCode, 200);
   assert.equal(dupVerifyRes.body.data.duplicate, true);

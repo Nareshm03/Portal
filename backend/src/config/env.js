@@ -1,8 +1,17 @@
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-// Small dotenv-compatible loader using Node core only (does not override host-injected env vars).
-const envFile = resolve(process.cwd(), '.env');
+// Resolve .env relative to this file's own location (src/config/env.js → ../../.env at project root).
+// This makes env loading stable regardless of the terminal's current working directory.
+// CWD-relative resolution is retained as a fallback so that host-injected test overrides
+// (e.g. NODE_ENV=test node src/index.js from a different path) continue to work.
+const __dir = dirname(fileURLToPath(import.meta.url));
+const envFile = (() => {
+  const moduleRelative = resolve(__dir, '../../../.env');
+  if (existsSync(moduleRelative)) return moduleRelative;
+  return resolve(process.cwd(), '.env');
+})();
 if (existsSync(envFile)) {
   for (const line of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
     const trimmed = line.trim();

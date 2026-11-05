@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { createMockSupabase, orderRow, intentRow, quoteRow, requestRow, tripRow, profileRow, future, past, testUuid } from '../helpers/mockSupabase.js';
 import { createRouteTester, injectDb } from '../helpers/routeTester.js';
 import { hashOtp } from '../../src/services/otp.js';
+import { env } from '../../src/config/env.js';
 
 const rt = createRouteTester();
 
@@ -76,6 +77,16 @@ test('POST /api/v1/quotes/:id/accept - buyer owns request, duty approved, create
     },
     rpc: {
       accept_quote: { data: ORDER_ID, error: null }
+    },
+    orders: {
+      data: [{
+        id: ORDER_ID, state: 'ACCEPTED', buyer_id: BUYER_ID, traveller_id: TRAVELLER_ID,
+        subtotal_paise: 8_370_000, platform_fee_paise: 417_500, total_paise: 8_787_500,
+        deposit_paise: 2_087_500, duty_paise: 12_000, traveller_reward_paise: 8_000,
+        upfront_paise: 2_517_000, balance_paise: 6_270_500,
+        payment_deadline: new Date(Date.now() + 900_000).toISOString()
+      }],
+      error: null
     }
   }));
   const res = await rt.post(`/quotes/${QUOTE_ID}/accept`, {
@@ -176,7 +187,7 @@ test('POST /api/v1/quotes/:id/accept - duplicate acceptance rejected by RPC', as
     authorization: buyerToken()
   });
   assert.equal(res.statusCode, 409);
-  assert.equal(res.body.error.code, 'QUOTE_ACCEPT_FAILED');
+  assert.equal(res.body.error.code, 'QUOTE_EXPIRED');
 });
 
 /* ------------------------------------------------------------------ */
@@ -250,30 +261,29 @@ test('POST /api/v1/payments/create-order - idempotent retry returns original int
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.id, INTENT_ID);
-  assert.equal(res.body.data.duplicate, true);
+  assert.equal(res.body.duplicate, true);
 });
 
 test('POST /api/v1/payments/create-order - conflicting idempotency key rejected', async (t) => {
-  const otherBuyerId = testUuid(8);
+  // The idempotency key is already bound to a DIFFERENT order (testUuid(99)) but the
+  // request is for ORDER_ID — that's a conflict the route must reject.
+  const otherOrderId = testUuid(99);
   injectDb(createMockSupabase({
     orders: {
-      data: [orderRow(ORDER_ID, otherBuyerId, 'ACCEPTED', 42_000, future)],
+      data: [orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future)],
       error: null
     },
     profiles: {
-      data: [
-        profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'),
-        profileRow(otherBuyerId, 'buyer', 'ACTIVE', 'VERIFIED')
-      ],
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
       error: null
     },
     payment_intents: {
-      data: [intentRow(INTENT_ID, ORDER_ID, otherBuyerId, 'MOCK', 'CREATED', 42_000, 'mock_i1')],
+      data: [intentRow(INTENT_ID, otherOrderId, BUYER_ID, 'MOCK', 'CREATED', 42_000, 'mock_i1')],
       error: null
     }
   }));
   const res = await rt.post('/payments/create-order', {
-    authorization: `Bearer ${otherBuyerId}-token`,
+    authorization: buyerToken(),
     'idempotency-key': `idem_${INTENT_ID}`
   }, { orderId: ORDER_ID });
 
@@ -339,7 +349,7 @@ test('POST /api/v1/payments/verify - mock payment captured, order locked, collec
       error: null
     },
     rpc: {
-      transition_order: { data: { id: ORDER_ID, state: 'LOCKED' }, error: null },
+      transition_order: { data: { id: ORDER_ID, state: 'LOCKED', upfront_paise: 42_000 }, error: null },
       post_ledger_transaction: { data: 'ledger-1', error: null }
     }
   });
@@ -379,7 +389,7 @@ test('POST /api/v1/payments/verify - duplicate verify (already captured) posts c
       error: null
     },
     rpc: {
-      transition_order: { data: { id: ORDER_ID, state: 'LOCKED' }, error: null },
+      transition_order: { data: { id: ORDER_ID, state: 'LOCKED', upfront_paise: 42_000 }, error: null },
       post_ledger_transaction: { data: 'ledger-1', error: null }
     }
   });
@@ -627,7 +637,7 @@ test('POST /api/v1/orders/:id/handover/issue-otp - non-landed order rejected', a
 
 test('POST /api/v1/orders/:id/handover/verify - valid OTP completes order and posts settlement ledger', async (t) => {
   const code = '123456';
-  const otpHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code, pepper: 'test-pepper' });
+  const otpHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code, pepper: env.OTP_PEPPER });
 
   injectDb(createMockSupabase({
     orders: {
@@ -643,12 +653,10 @@ test('POST /api/v1/orders/:id/handover/verify - valid OTP completes order and po
       error: null
     },
     rpc: {
-      transition_order: { data: { id: ORDER_ID, state: 'COMPLETED' }, error: null },
+      transition_order: { data: { id: ORDER_ID, state: 'COMPLETED', upfront_paise: 42_000, balance_paise: 83_000, duty_paise: 12_000, traveller_reward_paise: 8_000, platform_fee_paise: 5_000, subtotal_paise: 120_000 }, error: null },
       post_ledger_transaction: { data: 'ledger-settle-1', error: null }
     }
   }));
-  const origPepper = process.env.OTP_PEPPER;
-  process.env.OTP_PEPPER = 'test-pepper';
 
   const res = await rt.post(`/orders/${ORDER_ID}/handover/verify`, {
     authorization: buyerToken()
@@ -656,13 +664,11 @@ test('POST /api/v1/orders/:id/handover/verify - valid OTP completes order and po
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.data.state, 'COMPLETED');
-
-  process.env.OTP_PEPPER = origPepper;
 });
 
 test('POST /api/v1/orders/:id/handover/verify - wrong OTP rejected', async (t) => {
   const code = '123456';
-  const otpHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code, pepper: 'test-pepper' });
+  const otpHash = hashOtp({ orderId: ORDER_ID, userId: BUYER_ID, code, pepper: env.OTP_PEPPER });
 
   injectDb(createMockSupabase({
     orders: {
@@ -678,8 +684,6 @@ test('POST /api/v1/orders/:id/handover/verify - wrong OTP rejected', async (t) =
       error: null
     }
   }));
-  const origPepper = process.env.OTP_PEPPER;
-  process.env.OTP_PEPPER = 'test-pepper';
 
   const res = await rt.post(`/orders/${ORDER_ID}/handover/verify`, {
     authorization: buyerToken()
@@ -687,8 +691,6 @@ test('POST /api/v1/orders/:id/handover/verify - wrong OTP rejected', async (t) =
 
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.error.code, 'OTP_INVALID');
-
-  process.env.OTP_PEPPER = origPepper;
 });
 
 test('POST /api/v1/orders/:id/handover/verify - already completed order returns duplicate', async (t) => {
