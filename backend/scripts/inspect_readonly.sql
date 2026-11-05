@@ -56,7 +56,7 @@ order by table_name, ordinal_position;
 select conrelid::regclass as table_name, conname as constraint_name, contype as type, pg_get_constraintdef(oid) as definition
 from pg_constraint
 where connamespace='public'::regnamespace
-  and conrelid in ('profiles','trips','requests','quotes','orders','payment_intents'::regclass)
+  and conrelid in ('profiles'::regclass,'trips'::regclass,'requests'::regclass,'quotes'::regclass,'orders'::regclass,'payment_intents'::regclass)
 order by conrelid::regclass::text, conname;
 
 -- ==== 6. RLS status (enabled / forced) for all public tables ====

@@ -307,10 +307,11 @@ apiRouter.post('/payments/verify', requireAuth, requireRole('buyer'), async (req
   if (error || !intent) throw new HttpError(404, 'PAYMENT_INTENT_NOT_FOUND', 'Payment intent not found.');
   if (intent.provider_order_id !== body.providerOrderId) throw new HttpError(400, 'PAYMENT_ORDER_MISMATCH', 'Payment order does not match this intent.');
   if (intent.status === 'CAPTURED') {
-    const { data: existingOrder } = await supabase().from('orders').select('state').eq('id', intent.order_id).single();
+    const { data: existingOrder } = await supabase().from('orders').select('*').eq('id', intent.order_id).single();
     if (existingOrder?.state === 'ACCEPTED') {
-      const { error: retryError } = await supabase().rpc('transition_order', { p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Idempotent retry: payment already captured.' });
+      const { data: lockedOrder, error: retryError } = await supabase().rpc('transition_order', { p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Idempotent retry: payment already captured.' });
       if (retryError) throw new HttpError(409, 'ORDER_LOCK_RETRY_FAILED', 'Payment is captured, but the order still needs support review.');
+      if (lockedOrder) await postCollectionLedger(supabase(), lockedOrder, req.user.id).catch((e) => logger.error({ err: e, orderId: intent.order_id }, 'collection_ledger_failed'));
     }
     return res.json({ data: { status: 'CAPTURED', orderId: intent.order_id, duplicate: true } });
   }
