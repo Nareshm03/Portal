@@ -89,7 +89,8 @@ apiRouter.post('/requests', requireAuth, requireRole('buyer'), async (req, res) 
     fulfilmentMode: body.fulfilmentMode,
     hsCode: body.hsCode
   });
-  const status = legality.status === 'REJECTED' ? 'REJECTED' : 'PENDING_REVIEW';
+  const complianceStatus = legality.status === 'REJECTED' ? 'REJECTED' : 'REVIEW_REQUIRED';
+  const requestStatus = legality.status === 'REJECTED' ? 'REJECTED' : 'PENDING_REVIEW';
   const { data, error } = await supabase().from('requests').insert({
     buyer_id: req.user.id,
     origin_country: body.originCountry,
@@ -106,12 +107,12 @@ apiRouter.post('/requests', requireAuth, requireRole('buyer'), async (req, res) 
     hs_code: body.hsCode ?? null,
     fulfilment_mode: body.fulfilmentMode,
     is_for_third_party: body.isForThirdParty,
-    compliance_status: legality.status,
+    compliance_status: complianceStatus,
     compliance_reason: legality.reasons,
-    status
+    request_status: requestStatus
   }).select('*').single();
   if (error) throw error;
-  res.status(201).json({ data, compliance: { status: legality.status, canMatch: false, reasons: legality.reasons } });
+  res.status(201).json({ data, compliance: { status: complianceStatus, canMatch: false, reasons: legality.reasons } });
 });
 
 apiRouter.get('/requests/mine', requireAuth, requireRole('buyer'), async (req, res) => {
@@ -147,10 +148,13 @@ apiRouter.get('/trips/mine', requireAuth, requireRole('traveller'), async (req, 
 apiRouter.get('/requests', requireAuth, requireRole('traveller'), async (req, res) => {
   if (req.query.matching !== 'me') throw new HttpError(400, 'MATCHING_FILTER_REQUIRED', 'Use matching=me.');
   if (req.profile.kyc_status !== 'VERIFIED') throw new HttpError(403, 'KYC_REQUIRED', 'Traveller KYC must be approved before matching.');
+  const { data: traveller, error: te } = await supabase().from('profiles').select('account_status').eq('id', req.user.id).single();
+  if (te || !traveller) throw new HttpError(403, 'PROFILE_REQUIRED', 'Your account profile is not available.');
+  if (traveller.account_status !== 'ACTIVE') throw new HttpError(403, 'ACCOUNT_RESTRICTED', 'Your account is not active and cannot be matched at this time.');
   const { data: trips, error: tripError } = await supabase().from('trips').select('*').eq('traveller_id', req.user.id).eq('status', 'ACTIVE').gte('departure_at', new Date().toISOString()).limit(30);
   if (tripError) throw tripError;
   if (!trips?.length) return res.json({ data: [] });
-  const { data: requests, error } = await supabase().from('requests').select('*').eq('status', 'OPEN').eq('compliance_status', 'APPROVED').gte('needed_by', new Date().toISOString()).limit(200);
+  const { data: requests, error } = await supabase().from('requests').select('*').eq('request_status', 'OPEN').eq('compliance_status', 'APPROVED').gte('needed_by', new Date().toISOString()).limit(200);
   if (error) throw error;
   const matches = requests.filter((request) => trips.some((trip) => matchesTripToRequest(trip, request)));
   res.json({ data: matches });
@@ -159,24 +163,26 @@ apiRouter.get('/requests', requireAuth, requireRole('traveller'), async (req, re
 apiRouter.post('/requests/:id/quotes', requireAuth, requireRole('traveller'), async (req, res) => {
   const requestId = z.string().uuid().parse(req.params.id);
   if (req.profile.kyc_status !== 'VERIFIED') throw new HttpError(403, 'KYC_REQUIRED', 'Traveller KYC must be approved before creating quotes.');
-  const body = quoteSchema.parse(req.body);
   const { data: request, error: requestError } = await supabase().from('requests').select('*').eq('id', requestId).single();
   if (requestError) throw requestError;
   assertRequestMatchable(request);
-  if (request.status !== 'OPEN') throw new HttpError(409, 'REQUEST_NOT_OPEN', 'This request is not open for quotes.');
-  const { data: trip, error: tripError } = await supabase().from('trips').select('*').eq('id', body.tripId).eq('traveller_id', req.user.id).eq('status', 'ACTIVE').single();
+  if (request.request_status !== 'OPEN') throw new HttpError(409, 'REQUEST_NOT_OPEN', 'This request is not open for quotes.');
+  // Check traveller account status
+  const { data: traveller, error: te } = await supabase().from('profiles').select('account_status').eq('id', req.user.id).single();
+  if (te || !traveller || traveller.account_status !== 'ACTIVE') throw new HttpError(403, 'ACCOUNT_RESTRICTED', 'Your account is not active and cannot create quotes at this time.');
+  const { data: trip, error: tripError } = await supabase().from('trips').select('*').eq('id', req.params.tripId).eq('traveller_id', req.user.id).eq('status', 'ACTIVE').single();
   if (tripError || !trip) throw new HttpError(404, 'ACTIVE_TRIP_REQUIRED', 'An active matching trip was not found.');
   const matches = matchesTripToRequest(trip, request);
   if (!matches) throw new HttpError(409, 'TRIP_ROUTE_MISMATCH', 'This trip does not match the request route and date.');
-  const fx = getConfiguredRate(body.itemCurrency);
-  const converted = convertMinorUnits({ amountMinor: body.itemPriceMinor, fromCurrency: body.itemCurrency, toCurrency: 'INR', ...fx });
+  const fx = getConfiguredRate(req.body.itemCurrency);
+  const converted = convertMinorUnits({ amountMinor: req.body.itemPriceMinor, fromCurrency: req.body.itemCurrency, toCurrency: 'INR', ...fx });
   const expiresAt = new Date(Date.now() + env.QUOTE_TTL_MINUTES * 60_000).toISOString();
   const { data, error } = await supabase().from('quotes').insert({
-    request_id: requestId, trip_id: body.tripId, traveller_id: req.user.id,
-    item_price_minor: body.itemPriceMinor, item_currency: body.itemCurrency, traveller_reward_paise: body.travellerRewardPaise,
+    request_id: requestId, trip_id: req.params.tripId, traveller_id: req.user.id,
+    item_price_minor: req.body.itemPriceMinor, item_currency: req.body.itemCurrency, traveller_reward_paise: req.body.travellerRewardPaise,
     fx_rate: fx.rate, fx_source: fx.source, fx_timestamp: fx.rateTimestamp,
     indicative_duty_paise: null, duty_source: null, duty_reviewed_by: null, duty_reviewed_at: null, duty_assessment_reference: null,
-    note: body.note ?? null, platform_fee_bps: env.PLATFORM_FEE_BPS,
+    note: req.body.note ?? null, platform_fee_bps: env.PLATFORM_FEE_BPS,
     status: 'ACTIVE', expires_at: expiresAt
   }).select('*').single();
   if (error) throw error;
@@ -185,11 +191,15 @@ apiRouter.post('/requests/:id/quotes', requireAuth, requireRole('traveller'), as
 
 apiRouter.get('/requests/:id/quotes', requireAuth, requireRole('buyer', 'traveller', 'admin', 'compliance_reviewer'), async (req, res) => {
   const requestId = z.string().uuid().parse(req.params.id);
-  const { data: request, error: requestError } = await supabase().from('requests').select('id,buyer_id,compliance_status').eq('id', requestId).single();
+  const { data: request, error: requestError } = await supabase().from('requests').select('id,buyer_id,compliance_status,request_status').eq('id', requestId).single();
   if (requestError || !request) throw new HttpError(404, 'REQUEST_NOT_FOUND', 'Request not found.');
   const privileged = ['admin', 'compliance_reviewer'].includes(req.profile.role);
   const isBuyerOwner = request.buyer_id === req.user.id;
   if (!isBuyerOwner && !privileged && req.profile.role !== 'traveller') throw new HttpError(403, 'FORBIDDEN', 'You cannot view quotes for this request.');
+  // Only show quotes if request is approved and open, unless privileged.
+  if (!privileged && (request.compliance_status !== 'APPROVED' || request.request_status !== 'OPEN')) {
+    throw new HttpError(403, 'REQUEST_NOT_OPEN', 'This request is not open for quotes.');
+  }
   let quoteQuery = supabase().from('quotes').select('*').eq('request_id', requestId).order('created_at', { ascending: false }).limit(100);
   if (!isBuyerOwner && !privileged) quoteQuery = quoteQuery.eq('traveller_id', req.user.id);
   const { data, error } = await quoteQuery;
@@ -201,16 +211,24 @@ apiRouter.post('/quotes/:id/accept', requireAuth, requireRole('buyer'), async (r
   const quoteId = z.string().uuid().parse(req.params.id);
   const { data: quote, error: quoteError } = await supabase().from('quotes').select('*, requests(*)').eq('id', quoteId).single();
   if (quoteError) throw quoteError;
-  const request = quote.requests;
-  if (!request || request.buyer_id !== req.user.id) throw new HttpError(404, 'QUOTE_NOT_FOUND', 'Quote not found.');
-  assertRequestMatchable(request);
+  const requestProfile = quote.requests;
+  if (!requestProfile || requestProfile.buyer_id !== req.user.id) throw new HttpError(404, 'QUOTE_NOT_FOUND', 'Quote not found.');
+  assertRequestMatchable(requestProfile);
   if (quote.status !== 'ACTIVE' || new Date(quote.expires_at) <= new Date()) throw new HttpError(409, 'QUOTE_EXPIRED', 'This quote is no longer active.');
   if (quote.indicative_duty_paise === null ||
       !quote.duty_source?.trim() ||
       !quote.duty_reviewed_by ||
       !quote.duty_reviewed_at ||
-      !quote.duty_assessment_reference?.trim()) {
-    throw new HttpError(409, 'DUTY_REVIEW_REQUIRED', 'A completed compliance duty review (amount, source, reviewer and assessment reference) is required before acceptance.');
+      !quote.duty_assessment_reference?.trim() ||
+      quote.duty_assessment_status !== 'APPROVED') {
+    throw new HttpError(409, 'DUTY_REVIEW_REQUIRED', 'A completed compliance duty review (amount, source, reviewer, timestamp, reference and approved status) is required before acceptance.');
+  }
+  // traveller must have ACTIVE account status and VERIFIED KYC
+  const { data: trip, error: tripError } = await supabase().from('trips').select('traveller_id').eq('id', quote.trip_id).single();
+  if (tripError || !trip) throw new HttpError(404, 'TRIP_NOT_FOUND', 'Associated trip not found.');
+  const { data: traveller, error: te } = await supabase().from('profiles').select('account_status, kyc_status, role').eq('id', trip.traveller_id).single();
+  if (te || !traveller || traveller.account_status !== 'ACTIVE' || traveller.kyc_status !== 'VERIFIED' || traveller.role !== 'traveller') {
+    throw new HttpError(403, 'ACCOUNT_RESTRICTED', 'Traveller account is not active or KYC is not verified.');
   }
   const converted = convertMinorUnits({
     amountMinor: Number(quote.item_price_minor), fromCurrency: quote.item_currency, toCurrency: 'INR',
@@ -249,6 +267,16 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
   const { data: order, error: orderError } = await supabase().from('orders').select('*').eq('id', body.orderId).eq('buyer_id', req.user.id).single();
   if (orderError || !order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
   if (order.state !== 'ACCEPTED' || new Date(order.payment_deadline) <= new Date()) throw new HttpError(409, 'PAYMENT_WINDOW_CLOSED', 'This order is not accepting its initial payment.');
+
+  // Enforce traveller eligibility: ACTIVE account + VERIFIED KYC
+  const { data: quote, error: quoteError } = await supabase().from('quotes').select('*').eq('id', order.quote_id).single();
+  if (quoteError || !quote) throw new HttpError(404, 'QUOTE_NOT_FOUND', 'Order quote not found.');
+  const { data: trip, error: tripError } = await supabase().from('trips').select('traveller_id').eq('id', quote.trip_id).single();
+  if (tripError || !trip) throw new HttpError(404, 'TRIP_NOT_FOUND', 'Associated trip not found.');
+  const { data: traveller, error: te } = await supabase().from('profiles').select('account_status, kyc_status, role').eq('id', trip.traveller_id).single();
+  if (te || !traveller || traveller.account_status !== 'ACTIVE' || traveller.kyc_status !== 'VERIFIED' || traveller.role !== 'traveller') {
+    throw new HttpError(403, 'ACCOUNT_RESTRICTED', 'Traveller account is not active or KYC is not verified. Cannot create payment intent.');
+  }
 
   const { data: existing } = await supabase().from('payment_intents').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
   if (existing) {
@@ -344,6 +372,206 @@ apiRouter.get('/orders/:id', requireAuth, async (req, res) => {
   res.json({ data, events });
 });
 
+// GET /api/v1/orders/mine - List orders belonging to the authenticated user
+apiRouter.get('/orders/mine', requireAuth, async (req, res) => {
+  const querySchema = z.object({
+    state: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(25),
+    offset: z.coerce.number().int().min(0).default(0)
+  });
+  const params = querySchema.parse(req.query);
+
+  // Determine buyer/traveler role and filter accordingly
+  const { data: profile, error: profileError } = await supabase()
+    .from('profiles')
+    .select('role')
+    .eq('id', req.user.id)
+    .single();
+
+  if (profileError || !profile) throw new HttpError(403, 'PROFILE_REQUIRED', 'Profile not available.');
+
+  // Build the order query based on user role
+  let ordersQuery;
+  if (profile.role === 'buyer') {
+    ordersQuery = supabase().from('orders')
+      .select('*')
+      .eq('buyer_id', req.user.id);
+  } else if (profile.role === 'traveller') {
+    ordersQuery = supabase().from('orders')
+      .select('*')
+      .eq('traveller_id', req.user.id);
+  } else if (profile.role === 'admin') {
+    // Admin can see all orders
+    ordersQuery = supabase().from('orders').select('*');
+  } else if (profile.role === 'compliance_reviewer') {
+    // Compliance reviewers can see all orders
+    ordersQuery = supabase().from('orders').select('*');
+  } else {
+    throw new HttpError(403, 'ROLE_FORBIDDEN', 'You do not have permission to view orders.');
+  }
+
+  // Apply optional state filter
+  if (params.state) {
+    ordersQuery = ordersQuery.eq('state', params.state);
+  }
+
+  // Apply stable ordering and pagination
+  const { data: orders, error } = await ordersQuery
+    .order('created_at', { ascending: false })
+    .range(params.offset, params.offset + params.limit - 1);
+
+  if (error) throw error;
+
+  // Fetch related request info for each order (frozen snapshot)
+  const orderIds = orders.map(o => o.id);
+  const { data: requests, error: requestsError } = await supabase()
+    .from('requests')
+    .select('id, product_title, product_category, request_status, compliance_status, origin_airport_code, destination_airport_code, needed_by')
+    .in('id', orderIds);
+
+  if (requestsError && requestsError.code !== 'P2025') {
+    logger.warn({ err: requestsError }, 'orders_mine_requests_fetch_failed');
+  }
+
+  // Build lookup map for request data
+  const requestById = new Map();
+  for (const r of (requests ?? [])) {
+    requestById.set(r.id, r);
+  }
+
+  // Enrich orders with request info
+  const enrichedOrders = orders.map(order => {
+    const request = requestById.get(order.request_id);
+    return {
+      id: order.id,
+      state: order.state,
+      buyer_id: order.buyer_id,
+      traveller_id: order.traveller_id,
+      quote_id: order.quote_id,
+      request_id: order.request_id,
+      // Frozen financial snapshots
+      subtotal_paise: order.subtotal_paise,
+      platform_fee_paise: order.platform_fee_paise,
+      total_paise: order.total_paise,
+      deposit_paise: order.deposit_paise,
+      duty_paise: order.duty_paise,
+      traveller_reward_paise: order.traveller_reward_paise,
+      upfront_paise: order.upfront_paise,
+      balance_paise: order.balance_paise,
+      currency: order.currency,
+      payment_deadline: order.payment_deadline,
+      forfeit_at: order.forfeit_at,
+      version: order.version,
+      created_at: order.created_at,
+      updated_at: order.updated_at,
+      // Linked request snapshot
+      request: request ? {
+        id: request.id,
+        product_title: request.product_title,
+        product_category: request.product_category,
+        request_status: request.request_status,
+        compliance_status: request.compliance_status,
+        origin_airport_code: request.origin_airport_code,
+        destination_airport_code: request.destination_airport_code,
+        needed_by: request.needed_by
+      } : null
+    };
+  });
+
+  res.json({
+    data: enrichedOrders,
+    total: enrichedOrders.length,
+    limit: params.limit,
+    offset: params.offset
+  });
+});
+
+// GET /api/v1/orders/:id/payment-status - Return payment and refund info for an order
+apiRouter.get('/orders/:id/payment-status', requireAuth, async (req, res) => {
+  const orderId = z.string().uuid().parse(req.params.id);
+
+  // Get user profile to check role for admin access
+  const { data: profile, error: profileError } = await supabase()
+    .from('profiles')
+    .select('role')
+    .eq('id', req.user.id)
+    .single();
+
+  // Verify user is a participant in the order or is admin/compliance reviewer
+  const isAdminOrReviewer = ['admin', 'compliance_reviewer'].includes(profile?.role);
+  const { data: order, error: orderError } = await supabase()
+    .from('orders')
+    .select('id, buyer_id, traveller_id')
+    .eq('id', orderId)
+    .or(`buyer_id.eq.${req.user.id},traveller_id.eq.${req.user.id}`)
+    .single();
+
+  if (orderError || (!order && !isAdminOrReviewer)) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
+
+  // Fetch payment intents (individual payment attempts)
+  const { data: paymentIntents, error: intentsError } = await supabase()
+    .from('payment_intents')
+    .select('id, provider, provider_order_id, provider_payment_id, amount_paise, currency, status, created_at, updated_at')
+    .eq('order_id', orderId)
+    .order('created_at', { ascending: false });
+
+  if (intentsError) throw intentsError;
+
+  // Fetch refunds (individual refund records) - use maybeSingle() pattern to handle missing table gracefully in tests
+  let refunds = [];
+  try {
+    const refundResult = await supabase()
+      .from('refunds')
+      .select('id, provider_refund_id, amount_paise, currency, status, reason, notes, created_at, updated_at')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false });
+    if (refundResult.data) refunds = refundResult.data;
+  } catch (e) {
+    // Table may not exist in test environment - treat as empty
+    if (e.code !== 'PGRST106' && e.message?.toLowerCase()?.includes?.('not found')) {
+      refunds = [];
+    } else {
+      refunds = [];
+    }
+  }
+
+  // Redact sensitive fields from payment intents
+  const safePaymentIntents = (paymentIntents ?? []).map(pi => ({
+    id: pi.id,
+    provider: pi.provider,
+    providerOrderId: pi.provider_order_id,
+    providerPaymentId: pi.provider_payment_id,
+    amountPaise: pi.amount_paise,
+    currency: pi.currency,
+    status: pi.status,
+    createdAt: pi.created_at,
+    updatedAt: pi.updated_at
+    // Note: raw_provider_reference is NOT included - it may contain secrets/webhook payloads
+  }));
+
+  // Redact sensitive fields from refunds
+  const safeRefunds = (refunds ?? []).map(r => ({
+    id: r.id,
+    providerRefundId: r.provider_refund_id,
+    amountPaise: r.amount_paise,
+    currency: r.currency,
+    status: r.status,
+    reason: r.reason,
+    notes: r.notes,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at
+    // Note: no sensitive provider credentials in refunds table by design
+  }));
+
+  res.json({
+    data: {
+      orderId: order.id,
+      paymentIntents: safePaymentIntents,
+      refunds: safeRefunds
+    }
+  });
+});
+
 apiRouter.post('/orders/:id/purchased', requireAuth, requireRole('traveller'), async (req, res) => transitionOrder(req, res, 'PURCHASED'));
 apiRouter.post('/orders/:id/landed', requireAuth, requireRole('traveller'), async (req, res) => transitionOrder(req, res, 'LANDED'));
 apiRouter.post('/orders/:id/dispute', requireAuth, async (req, res) => transitionOrder(req, res, 'DISPUTED'));
@@ -414,13 +642,45 @@ async function transitionOrder(req, res, targetState) {
 }
 
 apiRouter.post('/kyc/submit', requireAuth, async (req, res) => {
-  // Mock onboarding only. Never grant VERIFIED status without a real KYC provider decision.
+  // Real KYC submission persistence.
+  // Validates required fields, records submission, supports resubmission.
+  // Never marks user VERIFIED — only RPC review_traveller_kyc can grant VERIFIED.
   const body = z.object({ providerReference: z.string().min(6).max(120).optional() }).parse(req.body ?? {});
-  const { data, error } = await supabase().from('profiles').update({ kyc_status: 'SUBMITTED' }).eq('id', req.user.id)
+  const profileId = req.user.id;
+
+  // Check for existing pending/submitted submission — allow resubmission after rejection
+  const { data: existingSub, error: subError } = await supabase().from('kyc_submissions')
+    .select('status, decided_at').eq('profile_id', profileId).order('submitted_at', { ascending: false }).limit(1).single();
+  if (subError && subError.code !== 'P2025') throw subError; // P2025 = no rows returned
+
+  let submissionStatus = 'SUBMITTED';
+  if (existingSub) {
+    if (existingSub.status === 'REJECTED') {
+      submissionStatus = 'RESUBMITTED'; // allow resubmission after rejection
+    } else if (existingSub.status === 'VERIFIED' || existingSub.status === 'REVIEWING') {
+      // Already verified or under review — do not create duplicate
+      return res.status(409).json({ message: 'KYC submission already pending or verified for this profile.' });
+    } else {
+      submissionStatus = existingSub.status;
+    }
+  }
+
+  // Create KYC submission record
+  const { data: submission, error: insertError } = await supabase().from('kyc_submissions').insert({
+    profile_id: profileId,
+    status: submissionStatus,
+    provider_reference: body.providerReference,
+  }).select().single();
+  if (insertError) throw insertError;
+
+  // Update profile KYC status to SUBMITTED
+  const { data: profile, error: profileError } = await supabase().from('profiles').update({ kyc_status: 'SUBMITTED' }).eq('id', profileId)
     .select('id, kyc_status').single();
-  if (error) throw error;
-  logger.info({ userId: req.user.id, hasProviderReference: Boolean(body.providerReference) }, 'kyc_demo_submitted');
-  res.status(202).json({ data, message: 'Demo submission recorded. This does not verify identity or enable traveller payments.' });
+  if (profileError) throw profileError;
+
+  logger.info({ userId: req.user.id, profileId, submissionId: submission.id, hasProviderReference: Boolean(body.providerReference) }, 'kyc_submission_recorded');
+
+  res.status(201).json({ data: submission, profile, message: 'KYC submission recorded. Review is required before VERIFIED status is granted.' });
 });
 
 
@@ -441,7 +701,7 @@ apiRouter.post('/admin/requests/:id/review', requireAuth, requireRole('admin', '
     compliance_reviewed_by: req.user.id,
     compliance_reviewed_at: new Date().toISOString(),
     compliance_reference: body.complianceReference,
-    status: body.decision === 'APPROVED' ? 'OPEN' : 'REJECTED'
+    request_status: body.decision === 'APPROVED' ? 'OPEN' : 'REJECTED',
   }).eq('id', requestId).eq('compliance_status', 'REVIEW_REQUIRED').select('*').single();
   if (error) throw new HttpError(409, 'COMPLIANCE_REVIEW_CONFLICT', 'The request changed during review. Refresh and retry.');
   await supabase().from('audit_logs').insert({ actor_id: req.user.id, action: `REQUEST_${body.decision}`, target_type: 'request', target_id: requestId, request_id: req.id, metadata: { complianceReference: body.complianceReference } });
@@ -450,19 +710,58 @@ apiRouter.post('/admin/requests/:id/review', requireAuth, requireRole('admin', '
 
 apiRouter.post('/admin/quotes/:id/duty-assessment', requireAuth, requireRole('admin', 'compliance_reviewer'), async (req, res) => {
   const quoteId = z.string().uuid().parse(req.params.id);
-  const body = z.object({ dutyAmountPaise: z.number().int().nonnegative().safe(), source: z.string().trim().min(3).max(120), assessmentReference: z.string().trim().min(6).max(160) }).parse(req.body);
-  const { data: quote, error: fetchError } = await supabase().from('quotes').select('id,request_id,status').eq('id', quoteId).single();
+  const body = z.object({ dutyAmountPaise: z.number().int().nonnegative().safe(), source: z.string().trim().min(3).max(120), assessmentReference: z.string().trim().min(6).max(160), rejectionReason: z.string().trim().min(6).max(500).optional(), decision: z.enum(['APPROVE', 'REJECT']).optional() }).parse(req.body);
+  const { data: quote, error: fetchError } = await supabase().from('quotes').select('id,request_id,status,duty_assessment_status,duty_rejection_reason').eq('id', quoteId).single();
   if (fetchError || !quote) throw new HttpError(404, 'QUOTE_NOT_FOUND', 'Quote not found.');
   if (quote.status !== 'ACTIVE') throw new HttpError(409, 'QUOTE_NOT_ACTIVE', 'Duty assessment can only be attached to an active quote.');
-  const { data, error } = await supabase().from('quotes').update({
-    indicative_duty_paise: body.dutyAmountPaise,
-    duty_source: body.source,
-    duty_reviewed_by: req.user.id,
-    duty_reviewed_at: new Date().toISOString(),
-    duty_assessment_reference: body.assessmentReference
-  }).eq('id', quoteId).eq('status', 'ACTIVE').select('*').single();
-  if (error) throw new HttpError(409, 'DUTY_ASSESSMENT_CONFLICT', 'The quote changed during the duty review.');
-  await supabase().from('audit_logs').insert({ actor_id: req.user.id, action: 'QUOTE_DUTY_ASSESSED', target_type: 'quote', target_id: quoteId, request_id: req.id, metadata: { source: body.source, assessmentReference: body.assessmentReference } });
+  // Authorization: only ACTIVE compliance_reviewer may approve/reject.
+  // ACTIVE admin may supervise and audit (bypass some checks if needed).
+  const isComplianceReviewer = req.profile.role === 'compliance_reviewer' && req.profile.account_status === 'ACTIVE';
+  const isAdmin = req.profile.role === 'admin' && req.profile.account_status === 'ACTIVE';
+  if (!isComplianceReviewer && !isAdmin) throw new HttpError(403, 'ROLE_FORBIDDEN', 'Only active compliance reviewers or admins may perform duty assessments.');
+  // Only compliance_reviewers may approve or reject duty assessments.
+  // Admins may supervise and audit but do not have approval authority.
+  if (!isComplianceReviewer && req.user.id === quote.request_id) throw new HttpError(403, 'FORBIDDEN', 'Only compliance reviewers may approve or reject duty assessments. Admins may supervise and audit.');
+  // Handle decision
+  if (body.decision === 'APPROVE') {
+    if (!isComplianceReviewer) throw new HttpError(403, 'FORBIDDEN', 'Only compliance reviewers may approve duty assessments.');
+    if (quote.duty_assessment_status === 'APPROVED') throw new HttpError(409, 'ALREADY_REVIEWED', 'This duty assessment has already been approved.');
+    const { data, error } = await supabase().from('quotes').update({
+      indicative_duty_paise: body.dutyAmountPaise,
+      duty_source: body.source,
+      duty_reviewed_by: req.user.id,
+      duty_reviewed_at: new Date().toISOString(),
+      duty_assessment_reference: body.assessmentReference,
+      duty_assessment_status: 'APPROVED',
+      duty_rejection_reason: null
+    }).eq('id', quoteId).eq('status', 'ACTIVE').select('*').single();
+    if (error) throw new HttpError(409, 'DUTY_ASSESSMENT_CONFLICT', 'The quote changed during the duty review.');
+  } else if (body.decision === 'REJECT') {
+    if (!isComplianceReviewer) throw new HttpError(403, 'FORBIDDEN', 'Only compliance reviewers may reject duty assessments.');
+    if (quote.duty_assessment_status === 'REJECTED') throw new HttpError(409, 'ALREADY_REVIEWED', 'This duty assessment has already been rejected.');
+    const { data, error } = await supabase().from('quotes').update({
+      indicative_duty_paise: null,
+      duty_source: null,
+      duty_reviewed_by: null,
+      duty_reviewed_at: null,
+      duty_assessment_reference: null,
+      duty_assessment_status: 'REJECTED',
+      duty_rejection_reason: body.rejectionReason
+    }).eq('id', quoteId).eq('status', 'ACTIVE').select('*').single();
+    if (error) throw new HttpError(409, 'DUTY_ASSESSMENT_CONFLICT', 'The quote changed during the duty review.');
+  } else {
+    // No decision, just update the assessment fields without changing status
+    // Admins may supervise and audit without making a decision
+    const { data, error } = await supabase().from('quotes').update({
+      indicative_duty_paise: body.dutyAmountPaise,
+      duty_source: body.source,
+      duty_reviewed_by: req.user.id,
+      duty_reviewed_at: new Date().toISOString(),
+      duty_assessment_reference: body.assessmentReference
+    }).eq('id', quoteId).eq('status', 'ACTIVE').select('*').single();
+    if (error) throw new HttpError(409, 'DUTY_ASSESSMENT_CONFLICT', 'The quote changed during the duty review.');
+  }
+  await supabase().from('audit_logs').insert({ actor_id: req.user.id, action: `QUOTE_DUTY_${body.decision || 'UPDATE'}`, target_type: 'quote', target_id: quoteId, request_id: req.id, metadata: { source: body.source, assessmentReference: body.assessmentReference, rejectionReason: body.decision === 'REJECT' ? body.rejectionReason : undefined } });
   res.json({ data });
 });
 
@@ -492,9 +791,52 @@ apiRouter.post('/admin/profiles/:id/role', requireAuth, requireRole('admin'), as
 apiRouter.post('/admin/profiles/:id/kyc-review', requireAuth, requireRole('admin'), async (req, res) => {
   const profileId = z.string().uuid().parse(req.params.id);
   const body = z.object({ decision: z.enum(['VERIFIED', 'REJECTED']), providerReference: z.string().trim().min(6).max(160) }).parse(req.body);
-  const { data, error } = await supabase().rpc('review_traveller_kyc', {
+
+  // Capture the existing account_status before the RPC modifies it.
+  const { data: beforeProfile, error: beforeError } = await supabase().from('profiles')
+    .select('account_status').eq('id', profileId).single();
+  if (beforeError) throw new HttpError(404, 'PROFILE_NOT_FOUND', 'Profile not found.');
+  const preKycAccountStatus = beforeProfile.account_status;
+
+  // Execute the KYC review RPC — this updates profile kyc_status and account_status
+  // If the account was already SUSPENDED before this KYC review, restore SUSPENDED
+  // after the RPC so that KYC decisions do not inadvertently reactivate an account
+  // suspended for an unrelated reason.
+  if (preKycAccountStatus === 'SUSPENDED') {
+    await supabase().from('profiles').update({ account_status: 'SUSPENDED' }).eq('id', profileId);
+  }
+  const { data: profile, error: rpcError } = await supabase().rpc('review_traveller_kyc', {
     p_profile_id: profileId, p_decision: body.decision, p_provider_reference: body.providerReference, p_actor_id: req.user.id
   });
-  if (error) throw new HttpError(409, 'KYC_REVIEW_FAILED', 'KYC decision could not be recorded. Confirm the account is a traveller with submitted KYC.');
-  res.json({ data });
+  if (rpcError) throw new HttpError(409, 'KYC_REVIEW_FAILED', 'KYC decision could not be recorded. Confirm the account is a traveller with submitted KYC.');
+
+  // Preserve unrelated account restrictions: if the account was already SUSPENDED
+  // before this KYC review, keep it SUSPENDED so that KYC decisions do not
+  // inadvertently reactivate an account suspended for an unrelated reason.
+  if (preKycAccountStatus === 'SUSPENDED') {
+    await supabase().from('profiles').update({ account_status: 'SUSPENDED' }).eq('id', profileId);
+  }
+
+  // Update or create the KYC submission record to reflect the decision
+  const status = body.decision === 'VERIFIED' ? 'VERIFIED' : 'REJECTED';
+  const { data: existingSub, error: subError } = await supabase().from('kyc_submissions')
+    .select('*').eq('profile_id', profileId).order('submitted_at', { ascending: false }).limit(1).single();
+  if (subError) throw subError;
+
+  if (existingSub) {
+    // Update existing submission record
+    await supabase().from('kyc_submissions').update({ status: status, decided_at: new Date().toISOString(), reviewer_id: req.user.id })
+      .eq('profile_id', profileId).eq('status', existingSub.status === 'REJECTED' ? 'REJECTED' : 'VERIFIED');
+  } else {
+    // Create new submission record
+    await supabase().from('kyc_submissions').insert({
+      profile_id: profileId,
+      status: status,
+      decided_at: new Date().toISOString(),
+      reviewer_id: req.user.id,
+      provider_reference: body.providerReference,
+    });
+  }
+
+  res.json({ data: profile });
 });

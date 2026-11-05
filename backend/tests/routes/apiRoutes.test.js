@@ -62,6 +62,10 @@ test('POST /api/v1/quotes/:id/accept requires buyer role', async (t) => {
 
 test('POST /api/v1/quotes/:id/accept - buyer owns request, duty approved, creates order', async (t) => {
   injectDb(createMockSupabase({
+    trips: {
+      data: [tripRow(TRIP_ID, TRAVELLER_ID, 'ACTIVE')],
+      error: null
+    },
     quotes: {
       data: [quoteRow(QUOTE_ID, REQUEST_ID, TRIP_ID, TRAVELLER_ID, 'ACTIVE', future, true, BUYER_ID)],
       error: null
@@ -71,7 +75,10 @@ test('POST /api/v1/quotes/:id/accept - buyer owns request, duty approved, create
       error: null
     },
     profiles: {
-      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      data: [
+        profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'),
+        profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')
+      ],
       error: null
     },
     orders: {
@@ -160,6 +167,10 @@ test('POST /api/v1/quotes/:id/accept - duty not approved rejected', async (t) =>
 
 test('POST /api/v1/quotes/:id/accept - duplicate acceptance rejected by RPC', async (t) => {
   injectDb(createMockSupabase({
+    trips: {
+      data: [tripRow(TRIP_ID, TRAVELLER_ID, 'ACTIVE')],
+      error: null
+    },
     quotes: {
       data: [quoteRow(QUOTE_ID, REQUEST_ID, TRIP_ID, TRAVELLER_ID, 'ACTIVE', future, true, BUYER_ID)],
       error: null
@@ -169,7 +180,10 @@ test('POST /api/v1/quotes/:id/accept - duplicate acceptance rejected by RPC', as
       error: null
     },
     profiles: {
-      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      data: [
+        profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'),
+        profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')
+      ],
       error: null
     },
     rpc: {
@@ -189,14 +203,62 @@ test('POST /api/v1/quotes/:id/accept - duplicate acceptance rejected by RPC', as
 
 test('POST /api/v1/payments/create-order - creates MOCK payment intent with upfront amount', async (t) => {
   injectDb(createMockSupabase({
+    trips: {
+      data: [tripRow(TRIP_ID, TRAVELLER_ID, 'ACTIVE')],
+      error: null
+    },
+    quotes: {
+      data: [{
+        id: QUOTE_ID,
+        request_id: REQUEST_ID,
+        trip_id: TRIP_ID,
+        traveller_id: TRAVELLER_ID,
+        item_price_minor: 1_000,
+        item_currency: 'USD',
+        traveller_reward_paise: 8_000,
+        fx_rate: '83.500000',
+        fx_source: 'ENV_CONFIG',
+        fx_timestamp: new Date().toISOString(),
+        indicative_duty_paise: 12_000,
+        duty_source: 'manual_hs_8517',
+        duty_reviewed_by: 'reviewer-1',
+        duty_reviewed_at: new Date().toISOString(),
+        duty_assessment_reference: 'REF-001',
+        duty_assessment_status: 'APPROVED',
+        platform_fee_bps: 500,
+        status: 'ACTIVE',
+        expires_at: future,
+        requests: { id: REQUEST_ID, buyer_id: BUYER_ID, compliance_status: 'APPROVED', status: 'OPEN' }
+      }],
+      error: null
+    },
     orders: {
-      data: [orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, {
-        deposit_paise: 25_000, duty_paise: 12_000, platform_fee_paise: 5_000
-      })],
+      data: [{
+        id: ORDER_ID,
+        buyer_id: BUYER_ID,
+        traveller_id: TRAVELLER_ID,
+        quote_id: QUOTE_ID,
+        request_id: REQUEST_ID,
+        state: 'ACCEPTED',
+        upfront_paise: 42_000,
+        balance_paise: 35_000,
+        subtotal_paise: 100_000,
+        platform_fee_paise: 5_000,
+        total_paise: 105_000,
+        deposit_paise: 25_000,
+        duty_paise: 12_000,
+        traveller_reward_paise: 8_000,
+        currency: 'INR',
+        payment_deadline: future,
+        forfeit_at: null
+      }],
       error: null
     },
     profiles: {
-      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      data: [
+        profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'),
+        profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')
+      ],
       error: null
     },
     payment_intents: {
@@ -234,12 +296,62 @@ test('POST /api/v1/payments/create-order - missing idempotency key rejected', as
 
 test('POST /api/v1/payments/create-order - idempotent retry returns original intent', async (t) => {
   injectDb(createMockSupabase({
+    trips: {
+      data: [tripRow(TRIP_ID, TRAVELLER_ID, 'ACTIVE')],
+      error: null
+    },
+    quotes: {
+      data: [{
+        id: QUOTE_ID,
+        request_id: REQUEST_ID,
+        trip_id: TRIP_ID,
+        traveller_id: TRAVELLER_ID,
+        item_price_minor: 1_000,
+        item_currency: 'USD',
+        traveller_reward_paise: 8_000,
+        fx_rate: '83.500000',
+        fx_source: 'ENV_CONFIG',
+        fx_timestamp: new Date().toISOString(),
+        indicative_duty_paise: 12_000,
+        duty_source: 'manual_hs_8517',
+        duty_reviewed_by: 'reviewer-1',
+        duty_reviewed_at: new Date().toISOString(),
+        duty_assessment_reference: 'REF-001',
+        duty_assessment_status: 'APPROVED',
+        platform_fee_bps: 500,
+        status: 'ACTIVE',
+        expires_at: future,
+        requests: { id: REQUEST_ID, buyer_id: BUYER_ID, compliance_status: 'APPROVED', status: 'OPEN' }
+      }],
+      error: null
+    },
     orders: {
-      data: [orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, freshFuture(10))],
+      data: [{
+        id: ORDER_ID,
+        buyer_id: BUYER_ID,
+        traveller_id: TRAVELLER_ID,
+        quote_id: QUOTE_ID,
+        request_id: REQUEST_ID,
+        state: 'ACCEPTED',
+        upfront_paise: 42_000,
+        balance_paise: 35_000,
+        subtotal_paise: 100_000,
+        platform_fee_paise: 5_000,
+        total_paise: 105_000,
+        deposit_paise: 25_000,
+        duty_paise: 12_000,
+        traveller_reward_paise: 8_000,
+        currency: 'INR',
+        payment_deadline: freshFuture(10),
+        forfeit_at: null
+      }],
       error: null
     },
     profiles: {
-      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      data: [
+        profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'),
+        profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')
+      ],
       error: null
     },
     payment_intents: {
@@ -261,17 +373,83 @@ test('POST /api/v1/payments/create-order - conflicting idempotency key rejected'
   const otherBuyerId = testUuid(8);
   const otherOrderId = testUuid(9);
   injectDb(createMockSupabase({
+    trips: {
+      data: [tripRow(TRIP_ID, TRAVELLER_ID, 'ACTIVE')],
+      error: null
+    },
+    quotes: {
+      data: [{
+        id: QUOTE_ID,
+        request_id: REQUEST_ID,
+        trip_id: TRIP_ID,
+        traveller_id: TRAVELLER_ID,
+        item_price_minor: 1_000,
+        item_currency: 'USD',
+        traveller_reward_paise: 8_000,
+        fx_rate: '83.500000',
+        fx_source: 'ENV_CONFIG',
+        fx_timestamp: new Date().toISOString(),
+        indicative_duty_paise: 12_000,
+        duty_source: 'manual_hs_8517',
+        duty_reviewed_by: 'reviewer-1',
+        duty_reviewed_at: new Date().toISOString(),
+        duty_assessment_reference: 'REF-001',
+        duty_assessment_status: 'APPROVED',
+        platform_fee_bps: 500,
+        status: 'ACTIVE',
+        expires_at: future,
+        requests: { id: REQUEST_ID, buyer_id: BUYER_ID, compliance_status: 'APPROVED', status: 'OPEN' }
+      }],
+      error: null
+    },
     orders: {
       data: [
-        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, freshFuture(10)),
-        orderRow(otherOrderId, otherBuyerId, 'ACCEPTED', 42_000, freshFuture(10))
+        {
+          id: ORDER_ID,
+          buyer_id: BUYER_ID,
+          traveller_id: TRAVELLER_ID,
+          quote_id: QUOTE_ID,
+          request_id: REQUEST_ID,
+          state: 'ACCEPTED',
+          upfront_paise: 42_000,
+          balance_paise: 35_000,
+          subtotal_paise: 100_000,
+          platform_fee_paise: 5_000,
+          total_paise: 105_000,
+          deposit_paise: 25_000,
+          duty_paise: 12_000,
+          traveller_reward_paise: 8_000,
+          currency: 'INR',
+          payment_deadline: freshFuture(10),
+          forfeit_at: null
+        },
+        {
+          id: otherOrderId,
+          buyer_id: otherBuyerId,
+          traveller_id: TRAVELLER_ID,
+          quote_id: testUuid(10),
+          request_id: testUuid(11),
+          state: 'ACCEPTED',
+          upfront_paise: 42_000,
+          balance_paise: 35_000,
+          subtotal_paise: 100_000,
+          platform_fee_paise: 5_000,
+          total_paise: 105_000,
+          deposit_paise: 25_000,
+          duty_paise: 12_000,
+          traveller_reward_paise: 8_000,
+          currency: 'INR',
+          payment_deadline: freshFuture(10),
+          forfeit_at: null
+        }
       ],
       error: null
     },
     profiles: {
       data: [
         profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'),
-        profileRow(otherBuyerId, 'buyer', 'ACTIVE', 'VERIFIED')
+        profileRow(otherBuyerId, 'buyer', 'ACTIVE', 'VERIFIED'),
+        profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')
       ],
       error: null
     },
@@ -585,6 +763,560 @@ test('GET /api/v1/orders/:id - non-participant cannot view', async (t) => {
   const res = await rt.get(`/orders/${ORDER_ID}`, { authorization: `Bearer ${strangerId}-token` });
   assert.equal(res.statusCode, 404);
   assert.equal(res.body.error.code, 'ORDER_NOT_FOUND');
+});
+
+/* ------------------------------------------------------------------ */
+/* Section 5: GET /api/v1/orders/mine - Buyer order listing           */
+/* ------------------------------------------------------------------ */
+
+test('GET /api/v1/orders/mine - buyer sees only their orders', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+  assert.equal(res.body.data[0].id, ORDER_ID);
+  assert.equal(res.body.data[0].state, 'ACCEPTED');
+});
+
+test('GET /api/v1/orders/mine - traveler sees only their orders', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED'), profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: travellerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+  assert.equal(res.body.data[0].id, ORDER_ID);
+});
+
+test('GET /api/v1/orders/mine - cross-user order access denied', async (t) => {
+  const strangerId = testUuid(88);
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(strangerId, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: `Bearer ${strangerId}-token` });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 0, 'Stranger should not see other users orders');
+});
+
+test('GET /api/v1/orders/mine - state filtering', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+        orderRow(testUuid(10), BUYER_ID, 'LOCKED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine?state=LOCKED', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+  assert.equal(res.body.data[0].state, 'LOCKED');
+});
+
+test('GET /api/v1/orders/mine - pagination and max limit', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine?limit=50&offset=0', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.limit >= 1);
+  assert.ok(res.body.offset >= 0);
+});
+
+test('GET /api/v1/orders/mine - includes request snapshot', async (t) => {
+  const REQUEST_ID = testUuid(5);
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, {
+          traveller_id: TRAVELLER_ID,
+          request_id: REQUEST_ID
+        }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [{
+        id: REQUEST_ID,
+        product_title: 'Test Product',
+        product_category: 'Electronics',
+        request_status: 'OPEN',
+        compliance_status: 'APPROVED',
+        origin_airport_code: 'JFK',
+        destination_airport_code: 'BLR',
+        needed_by: future
+      }],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data[0].request.id, REQUEST_ID);
+  assert.equal(res.body.data[0].request.product_title, 'Test Product');
+});
+
+test('GET /api/v1/orders/mine - admin can see all orders', async (t) => {
+  const ADMIN_ID = testUuid(100);
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: `Bearer ${ADMIN_ID}-token` });
+  // Admin can see all orders - but we need to check if profile lookup works with the mock
+  // The mock needs the admin profile for the role check
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+});
+
+/* ------------------------------------------------------------------ */
+/* Section 5b: GET /api/v1/orders/:id/payment-status                  */
+/* ------------------------------------------------------------------ */
+
+test('GET /api/v1/orders/:id/payment-status - participant sees payment intents', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LOCKED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [
+        {
+          id: testUuid(20),
+          order_id: ORDER_ID,
+          provider: 'MOCK',
+          provider_order_id: 'mock_' + testUuid(20),
+          provider_payment_id: 'pay_mock',
+          status: 'CREATED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    refunds: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.orderId, ORDER_ID);
+  assert.equal(res.body.data.paymentIntents.length, 1);
+  assert.equal(res.body.data.paymentIntents[0].provider, 'MOCK');
+  assert.equal(res.body.data.paymentIntents[0].status, 'CREATED');
+  assert.equal(res.body.data.refunds.length, 0);
+});
+
+test('GET /api/v1/orders/:id/payment-status - returns refunds', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [
+        {
+          id: testUuid(20),
+          order_id: ORDER_ID,
+          provider: 'MOCK',
+          provider_order_id: 'mock_' + testUuid(20),
+          status: 'CAPTURED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    refunds: {
+      data: [
+        {
+          id: testUuid(30),
+          order_id: ORDER_ID,
+          buyer_id: BUYER_ID,
+          provider_refund_id: 'ref_123',
+          status: 'COMPLETED',
+          reason: 'BUYER_REQUEST',
+          amount_paise: 10000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.paymentIntents.length, 1);
+  assert.equal(res.body.data.refunds.length, 1);
+  assert.equal(res.body.data.refunds[0].status, 'COMPLETED');
+  assert.equal(res.body.data.refunds[0].reason, 'BUYER_REQUEST');
+});
+
+test('GET /api/v1/orders/:id/payment-status - multiple payment attempts', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LOCKED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [
+        {
+          id: testUuid(20),
+          order_id: ORDER_ID,
+          provider: 'MOCK',
+          provider_order_id: 'mock_' + testUuid(20),
+          status: 'FAILED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        },
+        {
+          id: testUuid(21),
+          order_id: ORDER_ID,
+          provider: 'MOCK',
+          provider_order_id: 'mock_' + testUuid(21),
+          status: 'CREATED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    refunds: { data: [], error: null },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.paymentIntents.length, 2);
+});
+
+test('GET /api/v1/orders/:id/payment-status - multiple refunds', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'COMPLETED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [
+        {
+          id: testUuid(20),
+          order_id: ORDER_ID,
+          provider: 'MOCK',
+          provider_order_id: 'mock_' + testUuid(20),
+          status: 'CAPTURED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    refunds: {
+      data: [
+        {
+          id: testUuid(30),
+          order_id: ORDER_ID,
+          buyer_id: BUYER_ID,
+          provider_refund_id: 'ref_123',
+          status: 'COMPLETED',
+          reason: 'BUYER_REQUEST',
+          amount_paise: 10000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        },
+        {
+          id: testUuid(31),
+          order_id: ORDER_ID,
+          buyer_id: BUYER_ID,
+          provider_refund_id: 'ref_456',
+          status: 'FAILED',
+          reason: 'SYSTEM_ERROR',
+          amount_paise: 5000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.refunds.length, 2);
+});
+
+test('GET /api/v1/orders/:id/payment-status - payment and refund status separation', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LOCKED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [
+        {
+          id: testUuid(20),
+          order_id: ORDER_ID,
+          provider: 'MOCK',
+          status: 'CAPTURED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    refunds: {
+      data: [
+        {
+          id: testUuid(30),
+          order_id: ORDER_ID,
+          buyer_id: BUYER_ID,
+          provider_refund_id: 'ref_123',
+          status: 'PENDING',
+          reason: 'BUYER_REQUEST',
+          amount_paise: 10000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  // Payment status is CAPTURED, refund status is PENDING - kept separate
+  assert.equal(res.body.data.paymentIntents[0].status, 'CAPTURED');
+  assert.equal(res.body.data.refunds[0].status, 'PENDING');
+});
+
+test('GET /api/v1/orders/:id/payment-status - sensitive field redaction', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LOCKED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [
+        {
+          id: testUuid(20),
+          order_id: ORDER_ID,
+          provider: 'RAZORPAY',
+          provider_order_id: 'rp_order_abc123',
+          provider_payment_id: 'rp_pay_xyz789',
+          idempotency_key: 'secret-key-12345',
+          raw_provider_reference: {
+            webhookPayload: { secret: 'should-not-appear' },
+            internalRef: 'internal-123'
+          },
+          status: 'CAPTURED',
+          amount_paise: 42_000,
+          currency: 'INR',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ],
+      error: null
+    },
+    refunds: { data: [], error: null },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  const intent = res.body.data.paymentIntents[0];
+  assert.equal(intent.provider, 'RAZORPAY');
+  assert.ok(intent.providerOrderId);
+  assert.ok(!intent.raw_provider_reference, 'raw_provider_reference should not be exposed');
+  assert.ok(!intent.idempotency_key, 'idempotency_key should not be exposed');
+});
+
+test('GET /api/v1/orders/:id/payment-status - unauthorized access denied', async (t) => {
+  const strangerId = testUuid(99);
+  injectDb(createMockSupabase({
+    orders: {
+      data: [orderRow(ORDER_ID, BUYER_ID, 'LOCKED', 42_000, future, null, { traveller_id: TRAVELLER_ID })],
+      error: null
+    },
+    payment_intents: {
+      data: [],
+      error: null
+    },
+    refunds: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(strangerId, 'buyer', 'ACTIVE', 'VERIFIED'), profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: `Bearer ${strangerId}-token` });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error.code, 'ORDER_NOT_FOUND');
+});
+
+test('GET /api/v1/orders/:id/payment-status - order not found', async (t) => {
+  injectDb(createMockSupabase({
+    orders: { data: [], error: null },
+    payment_intents: { data: [], error: null },
+    refunds: { data: [], error: null },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/payment-status`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error.code, 'ORDER_NOT_FOUND');
+});
+
+test('GET /api/v1/orders/mine - orders with no payment attempts', async (t) => {
+  injectDb(createMockSupabase({
+    orders: {
+      data: [
+        orderRow(ORDER_ID, BUYER_ID, 'ACCEPTED', 42_000, future, null, { traveller_id: TRAVELLER_ID }),
+      ],
+      error: null
+    },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+});
+
+test('GET /api/v1/orders/mine - empty result for buyer with no orders', async (t) => {
+  injectDb(createMockSupabase({
+    orders: { data: [], error: null },
+    requests: {
+      data: [],
+      error: null
+    },
+    profiles: {
+      data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')],
+      error: null
+    }
+  }));
+  const res = await rt.get('/orders/mine', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 0, 'Buyer with no orders should get empty array');
 });
 
 /* ------------------------------------------------------------------ */

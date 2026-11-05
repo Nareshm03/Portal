@@ -196,13 +196,14 @@ export function quoteRow(id, requestId, tripId, travellerId, status = 'ACTIVE', 
     duty_reviewed_by: dutyApproved ? 'reviewer-1' : null,
     duty_reviewed_at: dutyApproved ? new Date().toISOString() : null,
     duty_assessment_reference: dutyApproved ? 'REF-001' : null,
+    duty_assessment_status: dutyApproved ? 'APPROVED' : 'PENDING_REVIEW',
     platform_fee_bps: 500, status, expires_at: expiresAt,
-    requests: { id: requestId, buyer_id: buyerId, compliance_status: 'APPROVED', status: 'OPEN' }
+    requests: { id: requestId, buyer_id: buyerId, compliance_status: 'APPROVED', request_status: 'OPEN' }
   };
 }
 
-export function requestRow(id, buyerId, status = 'OPEN', complianceStatus = 'APPROVED') {
-  return { id, buyer_id: buyerId, status, compliance_status: complianceStatus };
+export function requestRow(id, buyerId, requestStatus = 'OPEN', complianceStatus = 'APPROVED') {
+  return { id, buyer_id: buyerId, request_status: requestStatus, compliance_status: complianceStatus };
 }
 
 export function tripRow(id, travellerId, status = 'ACTIVE', extra = {}) {
@@ -220,4 +221,19 @@ export function profileRow(id, role = 'buyer', accountStatus = 'ACTIVE', kycStat
   return { id, role, account_status: accountStatus, kyc_status: kycStatus, full_name: 'Test User' };
 }
 
+export function refundRow(id, orderId, buyerId, providerRefundId, status = 'COMPLETED', amountPaise = 42000, reason = null) {
+  return {
+    id, order_id: orderId, buyer_id: buyerId,
+    provider_refund_id: providerRefundId, status,
+    amount_paise: amountPaise, currency: 'INR',
+    reason, created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+  };
+}
+
 export { testUuid };
+
+/* ------------------------------------------------------------------ *
+ * hashOtp helper for tests that need OTP hashing (re-export from OTP module)
+ * ------------------------------------------------------------------ */
+import { hashOtp } from '../../src/services/otp.js';
+export { hashOtp };
