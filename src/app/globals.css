@@ -1,0 +1,320 @@
+@import "tailwindcss";
+
+/*
+ * Portal design tokens
+ * Direction: Burgundy & Champagne, with cream/ivory surfaces.
+ *
+ * Legacy token names (obsidian, gold, on-obsidian) are retained as aliases so
+ * existing markup keeps working while new work uses the named brand scales.
+ */
+:root {
+  /* Brand — Burgundy */
+  --burgundy: #5b1a2b;
+  --burgundy-deep: #2b0a13;
+  --burgundy-soft: #7a2a3f;
+
+  /* Brand — Champagne */
+  --champagne: #d6b98c;
+  --champagne-strong: #b8935a;
+  --champagne-soft: #eadbc0;
+  /* Champagne dark enough for small text on cream surfaces. */
+  --champagne-ink: #7a5220;
+
+  /* Surfaces */
+  --background: #f7f1e6;
+  --foreground: #241017;
+  --surface: #fffbf3;
+  --surface-muted: #efe4d3;
+  --border: #e3d5c2;
+  --border-strong: #cdb99c;
+  --muted: #6e5a5e;
+  --muted-foreground: #8a767a;
+
+  /* Legacy aliases — keep the existing landing page unchanged */
+  --obsidian: var(--burgundy-deep);
+  --obsidian-soft: #3a121d;
+  --on-obsidian: #fbf7ee;
+  --gold: var(--champagne);
+  --gold-strong: var(--champagne-strong);
+  --gold-soft: var(--champagne-soft);
+
+  /* Tracking palette */
+  --sapphire: #24456e;
+  --sapphire-soft: #dce6f2;
+  --emerald: #1e6b4f;
+  --emerald-soft: #d9ebe2;
+  --ivory: #fbf7ee;
+
+  --destructive: #9b2c3b;
+
+  /* Semantic theme — overridden per workspace */
+  --primary: var(--burgundy);
+  --primary-foreground: var(--ivory);
+  --accent: var(--champagne);
+  --accent-foreground: var(--burgundy-deep);
+
+  --ring: var(--champagne-strong);
+}
+
+.dark {
+  --background: #1a0a10;
+  --foreground: #f7f1e6;
+
+  --surface: #241017;
+  --surface-muted: #2e151d;
+
+  --border: #3d2029;
+  --border-strong: #55303b;
+
+  --muted: #c3aeb2;
+  --muted-foreground: #a58e93;
+
+  --ring: #d6b98c;
+}
+
+/* ── Workspace theme variants ─────────────────────────────────────────────
+ * Same components, different emphasis. Wrap a region in <WorkspaceTheme>.
+ */
+[data-workspace="buyer"] {
+  --primary: var(--burgundy);
+  --primary-foreground: var(--ivory);
+  --accent: var(--champagne);
+  --accent-foreground: var(--burgundy-deep);
+  /* 9–11px secondary copy on cream needs a darker grey to clear AA. */
+  --muted-foreground: #6e5a5e;
+}
+
+[data-workspace="traveler"] {
+  --primary: var(--champagne-strong);
+  --primary-foreground: var(--burgundy-deep);
+  --accent: var(--burgundy);
+  --accent-foreground: var(--ivory);
+}
+
+[data-workspace="admin"] {
+  --primary: var(--burgundy-deep);
+  --primary-foreground: var(--ivory);
+  --accent: var(--ivory);
+  --accent-foreground: var(--burgundy-deep);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  /* Brand scales */
+  --color-burgundy: var(--burgundy);
+  --color-burgundy-deep: var(--burgundy-deep);
+  --color-burgundy-soft: var(--burgundy-soft);
+
+  --color-champagne: var(--champagne);
+  --color-champagne-strong: var(--champagne-strong);
+  --color-champagne-soft: var(--champagne-soft);
+  --color-champagne-ink: var(--champagne-ink);
+
+  /* Legacy aliases */
+  --color-gold: var(--gold);
+  --color-gold-strong: var(--gold-strong);
+  --color-gold-soft: var(--gold-soft);
+
+  --color-obsidian: var(--obsidian);
+  --color-obsidian-soft: var(--obsidian-soft);
+  --color-on-obsidian: var(--on-obsidian);
+
+  /* Tracking palette */
+  --color-sapphire: var(--sapphire);
+  --color-sapphire-soft: var(--sapphire-soft);
+  --color-emerald: var(--emerald);
+  --color-emerald-soft: var(--emerald-soft);
+  --color-ivory: var(--ivory);
+
+  --color-destructive: var(--destructive);
+
+  /* Semantic per-workspace theme */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: var(--font-dm-serif), "Cormorant Garamond", "Playfair Display",
+    Georgia, "Times New Roman", serif;
+
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "kern", "liga", "calt";
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--foreground);
+    font-family: var(--font-serif);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+
+  h1 {
+    font-size: clamp(2.25rem, 4vw, 3.5rem);
+  }
+
+  h2 {
+    font-size: clamp(1.75rem, 3vw, 2.5rem);
+  }
+
+  h3 {
+    font-size: clamp(1.375rem, 2vw, 1.75rem);
+  }
+
+  h4 {
+    font-size: 1.25rem;
+  }
+
+  h5 {
+    font-size: 1.0625rem;
+  }
+
+  h6 {
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  p {
+    max-width: 68ch;
+    text-wrap: pretty;
+  }
+
+  a {
+    color: inherit;
+    text-decoration-color: var(--champagne-strong);
+    text-underline-offset: 0.25em;
+  }
+
+  small {
+    font-size: 0.8125rem;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+  }
+
+  ::selection {
+    background-color: var(--champagne);
+    color: var(--burgundy-deep);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Small uppercase label used above headings. */
+  .eyebrow {
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--champagne-strong);
+  }
+
+  /* Buyer-only: the light surfaces need the darker champagne ink. */
+  [data-workspace="buyer"] .eyebrow {
+    color: var(--champagne-ink);
+  }
+
+  /* Thin champagne hairline divider. */
+  .gold-rule {
+    height: 1px;
+    width: 3rem;
+    background: linear-gradient(90deg, var(--champagne), transparent);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  /* Gentle editorial entrance used on the landing page. */
+  .animate-rise {
+    animation: rise 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .animate-rise {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
