@@ -123,8 +123,8 @@ create unique index order_evidence_storage_path_idx on public.order_evidence (st
 -- Clients never receive a public URL and cannot read objects directly.
 -- ---------------------------------------------------------------------------
 
-insert into storage.buckets (id, name, public, versioned)
-values ('order_evidence', 'order_evidence', false, false)
+insert into storage.buckets (id, name, public)
+values ('order_evidence', 'order_evidence', false)
 on conflict (id) do nothing;
 
 -- ---------------------------------------------------------------------------

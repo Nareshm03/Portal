@@ -12,6 +12,7 @@ import { apiRouter } from './routes/api.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { conversationRouter } from './routes/conversations.js';
 import { uploadRouter } from './routes/uploads.js';
+import { adminRouter } from './routes/admin.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -44,5 +45,6 @@ app.use('/api/v1/kyc', authLimiter);
 app.use('/api/v1', apiRouter);
 app.use('/api/v1', conversationRouter);
 app.use('/api/v1', uploadRouter);
+app.use('/api/v1', adminRouter);
 app.use(notFound);
 app.use(errorHandler);

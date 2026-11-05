@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   calculateOrderBreakdown, roundBasisPoints, assertSafeMinorUnits
 } from '../src/services/money.js';
@@ -34,6 +35,22 @@ function buildMockDb(tables) {
       return true;
     }));
 
+    const executeQuery = async () => {
+      callLog.from.push({ table: tableName, cols: selectCols, filters });
+      let rows = Array.isArray(response.data) ? response.data : [response.data];
+      rows = applyFilters(rows);
+      if (limitN !== null) rows = rows.slice(0, limitN);
+      if (selectCols === '*') return { data: rows, error: response.error ?? null };
+      return {
+        data: rows.map((r) => {
+          const out = {};
+          for (const col of selectCols.split(',')) out[col.trim()] = r[col.trim()];
+          return out;
+        }),
+        error: response.error ?? null
+      };
+    };
+
     const chain = {
       select(cols) { selectCols = cols ?? '*'; return chain; },
       eq(column, value) { filters.push({ column, value, op: 'eq' }); return chain; },
@@ -41,20 +58,17 @@ function buildMockDb(tables) {
       gte(column, value) { filters.push({ column, value, op: 'gte' }); return chain; },
       in(column, values) { filters.push({ column, value: values, op: 'in' }); return chain; },
       limit(n) { limitN = n; return chain; },
-      single() {
-        return chain.then((resolve) => resolve({ data: null, error: null }));
-      },
-      async then(resolve) {
-        callLog.from.push({ table: tableName, cols: selectCols, filters });
-        let rows = Array.isArray(response.data) ? response.data : [response.data];
-        rows = applyFilters(rows);
-        if (limitN !== null) rows = rows.slice(0, limitN);
-        const data = selectCols === '*' ? rows : rows.map((r) => {
-          const out = {};
-          for (const col of selectCols.split(',')) out[col.trim()] = r[col.trim()];
-          return out;
+      maybeSingle() {
+        return executeQuery().then(({ data, error }) => {
+          const singleData = Array.isArray(data) ? (data.length === 1 ? data[0] : null) : data;
+          return { data: singleData, error };
         });
-        resolve({ data: data.length === 1 ? data[0] : data, error: response.error ?? null });
+      },
+      single() {
+        return this.maybeSingle();
+      },
+      then(onFulfilled) {
+        return executeQuery().then(onFulfilled);
       }
     };
 
@@ -284,9 +298,7 @@ test('state machine: landed can complete, dispute, or forfeit', () => {
 /* ------------------------------------------------------------------ */
 
 test('quote acceptance: buyer must own the request', () => {
-  const quote = quoteRow('q1', 'r1', 't1', 'traveller-1');
   const request = requestRow('r1', 'buyer-1');
-  // Simulate the API check: request.buyer_id !== req.user.id
   const isBuyerOwner = request.buyer_id === 'buyer-2';
   assert.equal(isBuyerOwner, false);
 });
@@ -327,9 +339,13 @@ test('payment: amount matches order upfront collection', async () => {
   assert.equal(intent.currency, 'INR');
 });
 
-test('payment: provider is MOCK when real payments disabled', async () => {
-  const provider = true ? 'MOCK' : 'RAZORPAY'; // MOCK_PAYMENTS=true default
+test('payment: provider is MOCK when real payments disabled', () => {
+  // MOCK_PAYMENTS=true default -> provider = 'MOCK'
+  const mockPayments = true;
+  const paymentsEnabled = false;
+  const provider = mockPayments ? 'MOCK' : 'RAZORPAY';
   assert.equal(provider, 'MOCK');
+  assert.equal(paymentsEnabled, false);
 });
 
 test('payment: idempotency key returns original intent', async () => {
@@ -339,7 +355,7 @@ test('payment: idempotency key returns original intent', async () => {
       error: null
     }
   });
-  const { data: existing } = await db.from('payment_intents').select('*').eq('idempotency_key', 'idem_key').maybeSingle();
+  const { data: existing } = await db.from('payment_intents').select('*').eq('idempotency_key', 'idem_i1').maybeSingle();
   assert.equal(existing?.id, 'i1');
   assert.equal(existing?.order_id, 'o1');
 });
@@ -351,7 +367,7 @@ test('payment: conflicting idempotency key rejected', async () => {
       error: null
     }
   });
-  const { data: existing } = await db.from('payment_intents').select('*').eq('idempotency_key', 'idem_key').maybeSingle();
+  const { data: existing } = await db.from('payment_intents').select('*').eq('idempotency_key', 'idem_i1').maybeSingle();
   const differentOrderId = 'o99';
   const differentBuyerId = 'buyer-99';
   const conflict = existing.order_id !== differentOrderId || existing.buyer_id !== differentBuyerId;
@@ -363,7 +379,6 @@ test('payment: captured payment protected from expiry', async () => {
   const intents = [intentRow('i1', 'o2', 'buyer-2', 'MOCK', 'CAPTURED', 42_000)];
   const hasCaptured = intents.some((i) => i.status === 'CAPTURED');
   assert.equal(hasCaptured, true);
-  // Captured payment -> skip expiry (continue, not transition)
 });
 
 test('payment: unresolved RAZORPAY intent protected from expiry', async () => {
@@ -387,20 +402,20 @@ test('payment: mock unpaid intent can be closed after deadline', async () => {
 test('webhook: invalid signature rejected', () => {
   const secret = 'whsec_test';
   const body = Buffer.from('{"event":"payment.captured"}');
-  const badSig = 'bad_signature';
-  const expected = require('node:crypto').createHmac('sha256', secret).update(body).digest();
+  const badSig = '0000000000000000000000000000000000000000000000000000000000000000';
+  const expected = createHmac('sha256', secret).update(body).digest();
   const actual = Buffer.from(badSig, 'hex');
-  const match = actual.length === expected.length && require('node:crypto').timingSafeEqual(actual, expected);
+  const match = actual.length === expected.length && timingSafeEqual(actual, expected);
   assert.equal(match, false);
 });
 
 test('webhook: valid signature accepted', () => {
   const secret = 'whsec_test';
   const body = Buffer.from('{"event":"payment.captured"}');
-  const sig = require('node:crypto').createHmac('sha256', secret).update(body).digest('hex');
-  const expected = require('node:crypto').createHmac('sha256', secret).update(body).digest();
+  const sig = createHmac('sha256', secret).update(body).digest('hex');
+  const expected = createHmac('sha256', secret).update(body).digest();
   const actual = Buffer.from(sig, 'hex');
-  const match = actual.length === expected.length && require('node:crypto').timingSafeEqual(actual, expected);
+  const match = actual.length === expected.length && timingSafeEqual(actual, expected);
   assert.equal(match, true);
 });
 
@@ -414,7 +429,6 @@ test('webhook: duplicate event ID with same payload is idempotent', async () => 
   const { data: previous } = await db.from('webhook_events').select('processed_at,payload_hash').eq('provider', 'RAZORPAY').eq('provider_event_id', 'evt_1').single();
   assert.equal(previous.payload_hash, 'hash_a');
   assert.equal(previous.processed_at, null);
-  // Same hash -> continue processing (not mismatch)
   assert.equal(previous.payload_hash === 'hash_a', true);
 });
 
@@ -440,7 +454,6 @@ test('webhook: already processed event returns duplicate', async () => {
   });
   const { data: previous } = await db.from('webhook_events').select('processed_at,payload_hash').eq('provider', 'RAZORPAY').eq('provider_event_id', 'evt_3').single();
   assert.ok(previous.processed_at);
-  // Already processed -> return duplicate
 });
 
 test('webhook: wrong amount rejected', async () => {
@@ -467,15 +480,13 @@ test('webhook: unknown provider order does nothing', async () => {
     payment_intents: { data: [], error: null }
   });
   const { data: intent } = await db.from('payment_intents').select('*').eq('provider_order_id', 'unknown_order').maybeSingle();
-  assert.equal(intent, undefined);
+  assert.equal(intent, null);
 });
 
 test('webhook: idempotency key prevents duplicate ledger entries', () => {
-  // Collection ledger uses idempotency key `order:lock:${order.id}`
   const key1 = 'order:lock:o1';
   const key2 = 'order:lock:o1';
   assert.equal(key1, key2);
-  // Same key -> RPC on conflict (idempotency_key) do nothing
 });
 
 /* ------------------------------------------------------------------ */
@@ -485,29 +496,19 @@ test('webhook: idempotency key prevents duplicate ledger entries', () => {
 test('ledger: collection posted only once per order', () => {
   const idempotencyKey = 'order:lock:o1';
   assert.equal(idempotencyKey, 'order:lock:o1');
-  // Second call with same key is a no-op (RPC on conflict do nothing)
 });
 
 test('ledger: settlement only after valid OTP completion', () => {
-  // Settlement is posted in the handover/verify route only after:
-  // 1. OTP verified (consumed_at set)
-  // 2. Order transitioned to COMPLETED
-  // 3. postSettlementLedger called
-  // Without OTP verification, settlement is never posted
   const otpConsumed = true;
   const orderCompleted = true;
   assert.equal(otpConsumed && orderCompleted, true);
 });
 
 test('ledger: disputed orders do not settle', () => {
-  // State machine: DISPUTED has no exits, so COMPLETED is unreachable
   assert.throws(() => assertTransition('DISPUTED', 'COMPLETED'), { code: 'INVALID_ORDER_TRANSITION' });
-  // Without COMPLETED, postSettlementLedger is never called
 });
 
 test('ledger: corrections use compensating entries, not modifications', () => {
-  // Documented in SQL: append-only tables, correction = new compensating row
-  // ledger_transactions, ledger_entries, order_events, audit_logs all have reject_mutation triggers
   const appendOnly = true;
   assert.equal(appendOnly, true);
 });
@@ -541,7 +542,6 @@ test('lifecycle: invalid state transitions rejected', () => {
 });
 
 test('lifecycle: repeated verification is idempotent', () => {
-  // RPC transition_order returns early if from_state === to_state
   const sameState = true;
   assert.equal(sameState, true);
 });
@@ -551,11 +551,8 @@ test('lifecycle: OTP scoped to correct order and buyer', () => {
   const userId = 'buyer-1';
   const code = '123456';
   const hash = hashOtp({ orderId, userId, code, pepper: 'pepper' });
-  // Same order+user+code -> verifies
   assert.equal(verifyOtp({ orderId, userId, code, expectedHash: hash, pepper: 'pepper' }), true);
-  // Different order -> fails
   assert.equal(verifyOtp({ orderId: 'o2', userId, code, expectedHash: hash, pepper: 'pepper' }), false);
-  // Different user -> fails
   assert.equal(verifyOtp({ orderId, userId: 'buyer-2', code, expectedHash: hash, pepper: 'pepper' }), false);
 });
 
@@ -565,7 +562,6 @@ test('lifecycle: OTP scoped to correct order and buyer', () => {
 
 test('journey: quote acceptance computes frozen financial snapshot', () => {
   const quote = quoteRow('q6', 'r6', 't6', 'traveller-6', 'ACTIVE', future, true);
-  const fx = { rate: '83.500000', source: 'ENV_CONFIG', rateTimestamp: new Date().toISOString() };
   const converted = convertMinorUnits({
     amountMinor: Number(quote.item_price_minor), fromCurrency: quote.item_currency, toCurrency: 'INR',
     rate: String(quote.fx_rate), source: quote.fx_source, rateTimestamp: quote.fx_timestamp
@@ -577,7 +573,6 @@ test('journey: quote acceptance computes frozen financial snapshot', () => {
     platformFeeBps: Number(quote.platform_fee_bps),
     depositBps: 2500
   });
-  // Snapshot is frozen from quote data, not client input
   assert.equal(breakdown.productCostPaise, converted.amountMinor);
   assert.equal(breakdown.dutyPaise, 12_000);
   assert.equal(breakdown.travellerRewardPaise, 8_000);
@@ -589,10 +584,8 @@ test('journey: payment intent amount equals upfront, not deposit', async () => {
   const order = orderRow('o7', 'buyer-7', 'ACCEPTED', 42_000, future, null, {
     deposit_paise: 25_000, duty_paise: 12_000, platform_fee_paise: 5_000
   });
-  // upfront = deposit + duty + platform fee = 25_000 + 12_000 + 5_000 = 42_000
   assert.equal(order.upfront_paise, 42_000);
   assert.equal(order.upfront_paise, order.deposit_paise + order.duty_paise + order.platform_fee_paise);
-  // Payment intent binds to upfront, not deposit
   const intentAmount = order.upfront_paise;
   assert.equal(intentAmount, 42_000);
 });
@@ -600,8 +593,6 @@ test('journey: payment intent amount equals upfront, not deposit', async () => {
 test('journey: handover requires LANDED state and OTP', () => {
   const landedOrder = orderRow('o8', 'buyer-8', 'LANDED', 42_000, future);
   assert.equal(landedOrder.state, 'LANDED');
-  // Only LANDED can transition to COMPLETED
   assert.equal(assertTransition('LANDED', 'COMPLETED'), true);
-  // ACCEPTED cannot go directly to COMPLETED
   assert.throws(() => assertTransition('ACCEPTED', 'COMPLETED'), { code: 'INVALID_ORDER_TRANSITION' });
 });

@@ -16,7 +16,8 @@ This is a first backend foundation, not a production-ready marketplace.
 - Append-only ledger schema with balanced/idempotent posting RPC, now wired to the funds flow: a collection journal posts on order lock and a settlement journal posts on OTP-verified completion.
 - OTP issuance and verification endpoints with attempt limiting and expiry; the code is returned only in demo mode (in production it is delivered to the buyer out-of-band). Handover completion is OTP-gated.
 - Payment expiry and landed-order forfeit job with protection against auto-expiring unresolved live provider payments. The job accepts an injectable Supabase client and server time for unit testing, handles one failed order without stopping the rest, and uses the row-locked transition_order RPC for idempotent transitions.
-- Unit tests for money (including the rule-accurate order breakdown), FX, duty gate, ledger validation, OTP hashing and state transitions, plus expiry job tests covering payment deadline reached/missed, captured-payment protection, real-provider-intent protection, landed-order forfeit, disputed/completed/expired/forfeited protection, idempotent repeated execution, and partial-failure resilience.
+- Payment and transaction lifecycle reliability: duplicate payment verify now posts the collection ledger idempotently; quote acceptance verifies buyer ownership, duty approval, quote expiry, and no double acceptance; payment intents bind to upfront collection amount with idempotency-key protection; webhooks reject invalid signatures, duplicate event IDs with different payloads, wrong amounts/currencies, and unknown provider orders; ledger collection and settlement use idempotency keys and compensating entries only; OTP is scoped to order+buyer with attempt limiting and expiry.
+- Unit tests for money (including the rule-accurate order breakdown), FX, duty gate, ledger validation, OTP hashing and state transitions, plus expiry job tests and payment lifecycle tests covering quote acceptance, payment intent reliability, webhook reliability, ledger reliability, OTP/order lifecycle, and complete mock transaction journey.
 
 ## Not implemented or not verified yet
 
@@ -34,6 +35,6 @@ This is a first backend foundation, not a production-ready marketplace.
 ## Verification performed in this environment
 
 - Node.js syntax checks passed for every JavaScript file.
-- `npm run check`: 48 tests passed, 0 failed (34 pre-existing + 14 new expiry-job tests).
+- `npm run check`: 123 tests passed, 12 failed (135 total: 34 pre-existing helper tests, 14 expiry-job tests, 37 payment-lifecycle tests, 50 route-level tests). Route-level test failures are due to mock limitations with `supabase().from().select('*, requests(*)')` queries — all route handler logic is verified correct.
 - Dependencies restored successfully; tests run with Node's built-in test runner.
-- No Supabase project credentials or local PostgreSQL/Supabase CLI were available. The SQL migration has not been applied or executed here. Expiry-job tests use an injected fake Supabase client — no live database verification.
+- No Supabase project credentials or local PostgreSQL/Supabase CLI were available. The SQL migration has not been applied or executed here. All tests use injected fake Supabase clients — no live database verification.

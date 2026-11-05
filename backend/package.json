@@ -12,7 +12,8 @@
     "test": "node --test",
     "test:watch": "node --test --watch",
     "check": "node --check src/index.js && node --test",
-    "expire-orders": "node src/jobs/expireOrders.js"
+    "expire-orders": "node src/jobs/expireOrders.js",
+    "reconcile-payments": "node src/jobs/reconcilePayments.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
