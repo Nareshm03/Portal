@@ -1216,3 +1216,280 @@ test('POST /admin/profiles/:id/kyc-review - RPC error returns 409 KYC_REVIEW_FAI
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.error.code, 'KYC_REVIEW_FAILED');
 });
+
+/* ================================================================== */
+/* Section 14: Order List & Tracking — GET /orders/mine, /orders/assigned, /orders/:id, /orders/:id/timeline */
+/* ================================================================== */
+
+const ORDER_ID = testUuid(30);
+const PAYMENT_INTENT_ID = testUuid(31);
+
+function orderRowFull(id, buyerId, travellerId, state, createdAt = past) {
+  return {
+    id,
+    buyer_id: buyerId,
+    traveller_id: travellerId,
+    request_id: REQUEST_ID,
+    quote_id: QUOTE_ID,
+    state,
+    subtotal_paise: 103500,
+    platform_fee_paise: 4175,
+    total_paise: 107675,
+    deposit_paise: 20875,
+    duty_paise: 12000,
+    traveller_reward_paise: 8000,
+    upfront_paise: 37050,
+    balance_paise: 70625,
+    currency: 'INR',
+    payment_deadline: future,
+    forfeit_at: null,
+    version: 1,
+    created_at: createdAt,
+    updated_at: createdAt,
+  };
+}
+
+function paymentIntentRowFull(id, orderId, buyerId, status = 'CAPTURED', provider = 'RAZORPAY_TEST') {
+  return {
+    id,
+    order_id: orderId,
+    buyer_id: buyerId,
+    provider,
+    provider_order_id: `prov_${id}`,
+    provider_payment_id: `pay_${id}`,
+    idempotency_key: `idem_${id}`,
+    amount_paise: 37050,
+    currency: 'INR',
+    status,
+    raw_provider_reference: { mode: 'test' },
+    created_at: past,
+    updated_at: past,
+  };
+}
+
+function orderEventRow(orderId, fromState, toState, actorId, note, createdAt) {
+  return {
+    id: `evt-${orderId}-${toState}`,
+    order_id: orderId,
+    from_state: fromState,
+    to_state: toState,
+    actor_id: actorId,
+    note,
+    created_at: createdAt,
+  };
+}
+
+test('GET /orders/mine - buyer sees own orders with payment summary, returns 200', async (t) => {
+  const order1 = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LOCKED');
+  const order2 = orderRowFull(testUuid(31), BUYER_ID, OTHER_TRAVELLER_ID, 'COMPLETED');
+  const intent = paymentIntentRowFull(PAYMENT_INTENT_ID, ORDER_ID, BUYER_ID, 'CAPTURED');
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order1, order2], error: null },
+    requests: { data: [{ id: REQUEST_ID, product_title: 'Headphones', destination_airport_code: 'BLR', needed_by: future }], error: null },
+    payment_intents: { data: [intent], error: null },
+  }));
+  const res = await rt.get('/orders/mine', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 2);
+  assert.equal(res.body.data[0].id, ORDER_ID);
+  assert.equal(res.body.data[0].state, 'LOCKED');
+  assert.ok(res.body.data[0].payment);
+  assert.equal(res.body.data[0].payment.status, 'CAPTURED');
+  assert.equal(res.body.data[0].payment.provider, 'RAZORPAY_TEST');
+  assert.ok(res.body.pagination);
+});
+
+test('GET /orders/mine - buyer with no orders returns empty list', async (t) => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [], error: null },
+    requests: { data: [], error: null },
+  }));
+  const res = await rt.get('/orders/mine', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 0);
+  assert.equal(res.body.pagination.total, 0);
+});
+
+test('GET /orders/mine - traveller role returns 403 ROLE_FORBIDDEN', async (t) => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')], error: null },
+  }));
+  const res = await rt.get('/orders/mine', { authorization: travellerToken() });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.error.code, 'ROLE_FORBIDDEN');
+});
+
+test('GET /orders/mine - state filter works', async (t) => {
+  const order1 = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LOCKED');
+  const order2 = orderRowFull(testUuid(31), BUYER_ID, OTHER_TRAVELLER_ID, 'COMPLETED');
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order1, order2], error: null },
+    requests: { data: [{ id: REQUEST_ID, product_title: 'Headphones', destination_airport_code: 'BLR', needed_by: future }], error: null },
+    payment_intents: { data: [], error: null },
+  }));
+  const res = await rt.get('/orders/mine?state=LOCKED', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+  assert.equal(res.body.data[0].state, 'LOCKED');
+});
+
+test('GET /orders/assigned - traveller sees assigned orders, returns 200', async (t) => {
+  const order1 = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'PURCHASED');
+  const order2 = orderRowFull(testUuid(31), OTHER_TRAVELLER_ID, TRAVELLER_ID, 'LANDED');
+  const intent = paymentIntentRowFull(PAYMENT_INTENT_ID, ORDER_ID, BUYER_ID, 'CAPTURED');
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order1, order2], error: null },
+    requests: { data: [{ id: REQUEST_ID, product_title: 'Headphones', destination_airport_code: 'BLR', needed_by: future }], error: null },
+    payment_intents: { data: [intent], error: null },
+  }));
+  const res = await rt.get('/orders/assigned', { authorization: travellerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 2);
+  assert.ok(res.body.data.every(o => o.traveller_id === TRAVELLER_ID));
+  assert.ok(res.body.data[0].payment);
+});
+
+test('GET /orders/assigned - buyer role returns 403 ROLE_FORBIDDEN', async (t) => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+  }));
+  const res = await rt.get('/orders/assigned', { authorization: buyerToken() });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.error.code, 'ROLE_FORBIDDEN');
+});
+
+test('GET /orders/:id - participant sees order with events, payment, and tracking', async (t) => {
+  const order = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LANDED');
+  const intent = paymentIntentRowFull(PAYMENT_INTENT_ID, ORDER_ID, BUYER_ID, 'CAPTURED');
+  const events = [
+    orderEventRow(ORDER_ID, null, 'ACCEPTED', BUYER_ID, 'Quote accepted. Awaiting initial deposit.', past),
+    orderEventRow(ORDER_ID, 'ACCEPTED', 'LOCKED', BUYER_ID, 'Payment captured via verified Razorpay webhook.', past),
+    orderEventRow(ORDER_ID, 'LOCKED', 'PURCHASED', TRAVELLER_ID, 'Item purchased.', past),
+    orderEventRow(ORDER_ID, 'PURCHASED', 'LANDED', TRAVELLER_ID, 'Arrived at destination.', past),
+  ];
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order], error: null },
+    order_events: { data: events, error: null },
+    payment_intents: { data: [intent], error: null },
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.id, ORDER_ID);
+  assert.equal(res.body.data.state, 'LANDED');
+  assert.equal(res.body.events.length, 4);
+  assert.ok(res.body.payment);
+  assert.equal(res.body.payment.status, 'CAPTURED');
+  assert.ok(res.body.tracking);
+  assert.equal(res.body.tracking.current_milestone, 'Arrived - Awaiting Handover');
+  assert.equal(res.body.tracking.completed_milestones.length, 4);
+  assert.equal(res.body.tracking.pending_milestones.length, 1);
+  assert.equal(res.body.tracking.pending_milestones[0].key, 'handover');
+  assert.equal(res.body.tracking.payment_state, 'CAPTURED');
+});
+
+test('GET /orders/:id - traveller participant sees order with tracking', async (t) => {
+  const order = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LOCKED');
+  const intent = paymentIntentRowFull(PAYMENT_INTENT_ID, ORDER_ID, BUYER_ID, 'CAPTURED');
+  const events = [
+    orderEventRow(ORDER_ID, null, 'ACCEPTED', BUYER_ID, 'Quote accepted. Awaiting initial deposit.', past),
+    orderEventRow(ORDER_ID, 'ACCEPTED', 'LOCKED', BUYER_ID, 'Payment captured via verified Razorpay webhook.', past),
+  ];
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(TRAVELLER_ID, 'traveller', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order], error: null },
+    order_events: { data: events, error: null },
+    payment_intents: { data: [intent], error: null },
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}`, { authorization: travellerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.id, ORDER_ID);
+  assert.ok(res.body.tracking);
+  assert.equal(res.body.tracking.current_milestone, 'Payment Secured');
+});
+
+test('GET /orders/:id - stranger returns 404 ORDER_NOT_FOUND', async (t) => {
+  const order = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LOCKED');
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(STRANGER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order], error: null },
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}`, { authorization: strangerToken() });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error.code, 'ORDER_NOT_FOUND');
+});
+
+test('GET /orders/:id - order not found returns 404', async (t) => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [], error: null },
+  }));
+  const res = await rt.get(`/orders/${testUuid(99)}`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error.code, 'ORDER_NOT_FOUND');
+});
+
+test('GET /orders/:id/timeline - participant sees unified timeline', async (t) => {
+  const order = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LANDED');
+  const intent = paymentIntentRowFull(PAYMENT_INTENT_ID, ORDER_ID, BUYER_ID, 'CAPTURED');
+  const events = [
+    orderEventRow(ORDER_ID, null, 'ACCEPTED', BUYER_ID, 'Quote accepted. Awaiting initial deposit.', past),
+    orderEventRow(ORDER_ID, 'ACCEPTED', 'LOCKED', BUYER_ID, 'Payment captured via verified Razorpay webhook.', past),
+    orderEventRow(ORDER_ID, 'LOCKED', 'PURCHASED', TRAVELLER_ID, 'Item purchased.', past),
+    orderEventRow(ORDER_ID, 'PURCHASED', 'LANDED', TRAVELLER_ID, 'Arrived at destination.', past),
+  ];
+  const ledger = [
+    { id: 'txn-1', order_id: ORDER_ID, event_type: 'PAYMENT_CAPTURED', idempotency_key: 'idem-1', actor_id: BUYER_ID, metadata: { description: 'Upfront funds moved to escrow hold' }, created_at: past },
+  ];
+  const otpChallenges = [
+    { id: 'otp-1', order_id: ORDER_ID, recipient_user_id: BUYER_ID, created_at: past, expires_at: future, attempts: 0, consumed_at: null },
+  ];
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order], error: null },
+    order_events: { data: events, error: null },
+    payment_intents: { data: [intent], error: null },
+    ledger_transactions: { data: ledger, error: null },
+    otp_challenges: { data: otpChallenges, error: null },
+    refunds: { data: [], error: null },
+    disputes: { data: [], error: null },
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/timeline`, { authorization: buyerToken() });
+  assert.equal(res.statusCode, 200);
+  assert.ok(Array.isArray(res.body.data));
+  assert.ok(res.body.data.length >= 4); // At least state transitions
+  const stateTransitions = res.body.data.filter(e => e.type === 'state_transition');
+  assert.equal(stateTransitions.length, 4);
+  const paymentEvents = res.body.data.filter(e => e.type === 'payment');
+  assert.ok(paymentEvents.length >= 1);
+  const ledgerEvents = res.body.data.filter(e => e.type === 'ledger');
+  assert.ok(ledgerEvents.length >= 1);
+  const otpEvents = res.body.data.filter(e => e.type === 'otp');
+  assert.ok(otpEvents.length >= 1);
+  // Verify chronological order
+  for (let i = 1; i < res.body.data.length; i++) {
+    assert.ok(new Date(res.body.data[i-1].timestamp).getTime() <= new Date(res.body.data[i].timestamp).getTime());
+  }
+});
+
+test('GET /orders/:id/timeline - stranger returns 404 ORDER_NOT_FOUND', async (t) => {
+  const order = orderRowFull(ORDER_ID, BUYER_ID, TRAVELLER_ID, 'LOCKED');
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(STRANGER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [order], error: null },
+  }));
+  const res = await rt.get(`/orders/${ORDER_ID}/timeline`, { authorization: strangerToken() });
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.error.code, 'ORDER_NOT_FOUND');
+});
+
+test('GET /orders/:id/timeline - unauthenticated returns 401', async (t) => {
+  injectDb(createMockSupabase());
+  const res = await rt.get(`/orders/${ORDER_ID}/timeline`, {});
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.error.code, 'AUTH_REQUIRED');
+});

@@ -30,6 +30,15 @@ export function createMockSupabase(tables = {}) {
       if (f.op === 'in') return f.value.includes(rowVal);
       if (f.op === 'neq') return rowVal !== f.value;
       if (f.op === 'is') return f.value === null ? rowVal === null : rowVal !== null;
+      if (f.op === 'or') {
+        return f.conditions.some((cond) => {
+          const [col, op, val] = cond.split('.');
+          const rowVal2 = row[col];
+          if (op === 'eq') return rowVal2 === val;
+          if (op === 'neq') return rowVal2 !== val;
+          return false;
+        });
+      }
       return true;
     }));
 
@@ -75,7 +84,11 @@ export function createMockSupabase(tables = {}) {
       in(column, values) { filters.push({ column, value: values, op: 'in' }); return chain; },
       neq(column, value) { filters.push({ column, value, op: 'neq' }); return chain; },
       is(column, value) { filters.push({ column, value, op: 'is' }); return chain; },
-      or() { return chain; },
+      or(condition) {
+        const conditions = condition.split(',').map(c => c.trim());
+        filters.push({ column: 'or', value: null, op: 'or', conditions });
+        return chain;
+      },
       order() { return chain; },
       limit(n) { limitN = n; return chain; },
       range(from, to) { limitN = to - from + 1; offsetN = from; return chain; },

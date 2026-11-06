@@ -55,7 +55,7 @@ export interface TravelerProfile {
   phone: string;
   baseCity: string;
   baseCountry: string;
-  homeAirport: AirportCode;
+  homeAirport: AirportCode | string;
   memberSince: string;
   tier: string;
   verification: string;

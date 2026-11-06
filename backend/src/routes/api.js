@@ -8,7 +8,7 @@ import { HttpError } from '../utils/httpError.js';
 import { evaluateRequest, assertRequestMatchable } from '../services/duty.js';
 import { getConfiguredRate, convertMinorUnits } from '../services/fx.js';
 import { calculateOrderBreakdown } from '../services/money.js';
-import { assertTransition } from '../services/stateMachine.js';
+import { assertTransition, buildTrackingInfo, buildPaymentSummary } from '../services/stateMachine.js';
 import { createRazorpayOrder, verifyCheckoutSignature, fetchRazorpayPayment } from '../services/razorpay.js';
 import { generateOtp, hashOtp, verifyOtp } from '../services/otp.js';
 import { sendOtpSms, maskMobile } from '../services/sms.js';
@@ -25,6 +25,12 @@ import {
   checkRefundLimit,
   REFUND_STATUSES,
 } from '../services/refund.js';
+import {
+  checkSettlementBlock,
+  checkRefundConflict,
+  validateDisputeData,
+  buildDisputeEvent,
+} from '../services/disputes.js';
 import { logger } from '../config/logger.js';
 
 export const apiRouter = Router();
@@ -461,7 +467,7 @@ apiRouter.post('/payments/verify', requireAuth, requireRole('buyer'), async (req
  */
 apiRouter.post('/orders/:id/cancel', requireAuth, requireRole('buyer', 'traveller'), async (req, res) => {
   const orderId = z.string().uuid().parse(req.params.id);
-  const body = z.object({ reason: z.string().trim().min(1).max(500) }).parse(req.body ?? {});
+  const body = z.object({ reason: z.string().trim().min(1).max(500), policyOverride: z.boolean().optional() }).parse(req.body ?? {});
   const { data: order, error } = await supabase().from('orders')
     .select('id, state, buyer_id, traveller_id, upfront_paise, provider, payment_deadline')
     .eq('id', orderId)
@@ -472,6 +478,16 @@ apiRouter.post('/orders/:id/cancel', requireAuth, requireRole('buyer', 'travelle
   const eligibility = checkCancellationEligibility(order, req.user.id, req.profile.role);
   if (!eligibility.eligible) {
     throw new HttpError(409, 'CANCELLATION_NOT_ELIGIBLE', eligibility.reason);
+  }
+
+  // Prevent conflicting refunds during an active dispute unless explicitly permitted by approved policy
+  const { data: orderDisputes } = await supabase()
+    .from('disputes')
+    .select('id, status')
+    .eq('order_id', orderId);
+  const refundConflict = checkRefundConflict(orderDisputes ?? [], body.policyOverride === true);
+  if (refundConflict.blocked) {
+    throw new HttpError(409, 'REFUND_DISPUTE_CONFLICT', refundConflict.reason);
   }
 
   // Capture payment intents for refundable amount calculation.
@@ -623,6 +639,16 @@ apiRouter.post('/refunds/create', requireAuth, requireRole('buyer', 'traveller')
   const eligibility = checkCancellationEligibility(order, req.user.id, req.profile.role);
   if (!eligibility.eligible) {
     throw new HttpError(409, 'CANCELLATION_NOT_ELIGIBLE', eligibility.reason);
+  }
+
+  // Prevent conflicting refunds during an active dispute unless explicitly permitted by approved policy
+  const { data: orderDisputes } = await supabase()
+    .from('disputes')
+    .select('id, status')
+    .eq('order_id', body.orderId);
+  const refundConflict = checkRefundConflict(orderDisputes ?? [], body.policyOverride === true);
+  if (refundConflict.blocked) {
+    throw new HttpError(409, 'REFUND_DISPUTE_CONFLICT', refundConflict.reason);
   }
 
   // Check for existing refund with this idempotency key.
@@ -801,13 +827,219 @@ apiRouter.post('/refunds/execute', requireAuth, requireRole('buyer', 'traveller'
   });
 });
 
+/* ------------------------------------------------------------------ */
+/* Order List & Tracking                                              */
+/* ------------------------------------------------------------------ */
+
+const orderListSelect = `
+  id,
+  request_id,
+  quote_id,
+  buyer_id,
+  traveller_id,
+  state,
+  subtotal_paise,
+  platform_fee_paise,
+  total_paise,
+  deposit_paise,
+  duty_paise,
+  traveller_reward_paise,
+  upfront_paise,
+  balance_paise,
+  currency,
+  payment_deadline,
+  forfeit_at,
+  version,
+  created_at,
+  updated_at
+`;
+
+async function getOrderList(req, res, filterColumn) {
+  const query = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
+    state: z.enum(['ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED', 'CANCELLED', 'REFUNDED']).optional()
+  }).parse(req.query);
+
+  let baseQuery = supabase()
+    .from('orders')
+    .select(`${orderListSelect}, requests!inner(product_title, destination_airport_code, needed_by)`, { count: 'exact' })
+    .eq(filterColumn, req.user.id)
+    .order('created_at', { ascending: false })
+    .range(query.offset, query.offset + query.limit - 1);
+
+  if (query.state) {
+    baseQuery = baseQuery.eq('state', query.state);
+  }
+
+  const { data, error, count } = await baseQuery;
+  if (error) throw error;
+
+  const orderIds = data?.map(o => o.id) ?? [];
+  let paymentMap = new Map();
+  if (orderIds.length > 0) {
+    const { data: intents } = await supabase()
+      .from('payment_intents')
+      .select('order_id, status, provider, amount_paise, currency, provider_payment_id, updated_at')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: false });
+    if (intents) {
+      for (const intent of intents) {
+        if (!paymentMap.has(intent.order_id)) {
+          paymentMap.set(intent.order_id, intent);
+        }
+      }
+    }
+  }
+
+  const enriched = (data ?? []).map(order => {
+    const intent = paymentMap.get(order.id);
+    return {
+      ...order,
+      request: order.requests,
+      payment: buildPaymentSummary(intent)
+    };
+  });
+
+  res.json({
+    data: enriched,
+    pagination: { limit: query.limit, offset: query.offset, total: count ?? 0 }
+  });
+}
+
+apiRouter.get('/orders/mine', requireAuth, requireRole('buyer'), async (req, res) => {
+  await getOrderList(req, res, 'buyer_id');
+});
+
+apiRouter.get('/orders/assigned', requireAuth, requireRole('traveller'), async (req, res) => {
+  await getOrderList(req, res, 'traveller_id');
+});
+
 apiRouter.get('/orders/:id', requireAuth, async (req, res) => {
   const orderId = z.string().uuid().parse(req.params.id);
-  const { data, error } = await supabase().from('orders').select('*').eq('id', orderId).or(`buyer_id.eq.${req.user.id},traveller_id.eq.${req.user.id}`).single();
-  if (error || !data) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
-  const { data: events, error: eventsError } = await supabase().from('order_events').select('from_state,to_state,note,created_at').eq('order_id', orderId).order('created_at');
+  const { data: order, error } = await supabase().from('orders').select('*').eq('id', orderId).or(`buyer_id.eq.${req.user.id},traveller_id.eq.${req.user.id}`).single();
+  if (error || !order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
+  
+  const { data: events, error: eventsError } = await supabase().from('order_events').select('from_state,to_state,note,actor_id,created_at').eq('order_id', orderId).order('created_at');
   if (eventsError) throw eventsError;
-  res.json({ data, events });
+
+  const { data: paymentIntent } = await supabase()
+    .from('payment_intents')
+    .select('status, provider, amount_paise, currency, provider_payment_id, updated_at')
+    .eq('order_id', orderId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const payment = buildPaymentSummary(paymentIntent);
+  const tracking = buildTrackingInfo(order, events ?? [], paymentIntent);
+
+  res.json({ data: order, events: events ?? [], payment, tracking });
+});
+
+apiRouter.get('/orders/:id/timeline', requireAuth, async (req, res) => {
+  const orderId = z.string().uuid().parse(req.params.id);
+  const { data: order, error } = await supabase().from('orders').select('id,buyer_id,traveller_id').eq('id', orderId).or(`buyer_id.eq.${req.user.id},traveller_id.eq.${req.user.id}`).single();
+  if (error || !order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
+
+  const [eventsResult, intentsResult, ledgerResult, otpResult, refundsResult, disputesResult] = await Promise.all([
+    supabase().from('order_events').select('from_state,to_state,note,actor_id,created_at').eq('order_id', orderId).order('created_at'),
+    supabase().from('payment_intents').select('status,provider,amount_paise,currency,provider_payment_id,created_at,updated_at').eq('order_id', orderId).order('created_at'),
+    supabase().from('ledger_transactions').select('event_type,idempotency_key,actor_id,metadata,created_at').eq('order_id', orderId).order('created_at'),
+    supabase().from('otp_challenges').select('created_at,expires_at,attempts,consumed_at').eq('order_id', orderId).eq('recipient_user_id', order.buyer_id).order('created_at'),
+    supabase().from('refunds').select('id,amount_paise,status,provider,created_at,updated_at').eq('order_id', orderId).order('created_at'),
+    supabase().from('disputes').select('id,reason,status,created_at,updated_at,resolved_at').eq('order_id', orderId).order('created_at')
+  ]);
+
+  const events = eventsResult.data ?? [];
+  const intents = intentsResult.data ?? [];
+  const ledger = ledgerResult.data ?? [];
+  const otpChallenges = otpResult.data ?? [];
+  const refunds = refundsResult.data ?? [];
+  const disputes = disputesResult.data ?? [];
+
+  const timeline = [];
+
+  for (const evt of events) {
+    timeline.push({
+      type: 'state_transition',
+      timestamp: evt.created_at,
+      title: `${evt.from_state ? evt.from_state + ' \u2192 ' : ''}${evt.to_state}`,
+      description: evt.note ?? `Order transitioned to ${evt.to_state}`,
+      state: evt.to_state,
+      actor: evt.actor_id === order.buyer_id ? 'buyer' : evt.actor_id === order.traveller_id ? 'traveller' : 'system'
+    });
+  }
+
+  for (const intent of intents) {
+    const statusMap = { CREATING: 'Created', CREATED: 'Created', AUTHORIZED: 'Authorized', CAPTURED: 'Captured', FAILED: 'Failed', REFUNDED: 'Refunded' };
+    timeline.push({
+      type: 'payment',
+      timestamp: intent.status === 'CAPTURED' ? intent.updated_at : intent.created_at,
+      title: `Payment ${statusMap[intent.status] ?? intent.status}`,
+      description: `Payment intent ${intent.status.toLowerCase()} via ${intent.provider} for ${Number(intent.amount_paise) / 100} ${intent.currency}`,
+      state: intent.status,
+      amount_paise: Number(intent.amount_paise),
+      provider: intent.provider
+    });
+  }
+
+  for (const l of ledger) {
+    timeline.push({
+      type: 'ledger',
+      timestamp: l.created_at,
+      title: `Ledger: ${l.event_type}`,
+      description: l.metadata?.description ?? `Ledger transaction ${l.event_type}`,
+      event_type: l.event_type
+    });
+  }
+
+  for (const otp of otpChallenges) {
+    if (otp.consumed_at) {
+      timeline.push({
+        type: 'otp',
+        timestamp: otp.consumed_at,
+        title: 'Handover OTP Verified',
+        description: 'Buyer verified OTP and confirmed handover',
+        state: 'OTP_VERIFIED'
+      });
+    } else {
+      timeline.push({
+        type: 'otp',
+        timestamp: otp.created_at,
+        title: 'Handover OTP Issued',
+        description: 'OTP sent to buyer for handover verification',
+        state: 'OTP_ISSUED'
+      });
+    }
+  }
+
+  for (const r of refunds) {
+    timeline.push({
+      type: 'refund',
+      timestamp: r.created_at,
+      title: `Refund ${r.status}`,
+      description: `Refund of ${Number(r.amount_paise) / 100} INR ${r.status.toLowerCase()} via ${r.provider}`,
+      state: r.status,
+      amount_paise: Number(r.amount_paise),
+      provider: r.provider
+    });
+  }
+
+  for (const d of disputes) {
+    timeline.push({
+      type: 'dispute',
+      timestamp: d.created_at,
+      title: `Dispute ${d.status}`,
+      description: `Dispute raised: ${d.reason}`,
+      state: d.status,
+      resolved_at: d.resolved_at
+    });
+  }
+
+  timeline.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  res.json({ data: timeline });
 });
 
 apiRouter.post('/orders/:id/purchased', requireAuth, requireRole('traveller'), async (req, res) => transitionOrder(req, res, 'PURCHASED'));
@@ -904,6 +1136,17 @@ apiRouter.post('/orders/:id/handover/verify', requireAuth, requireRole('buyer'),
   if (error || !order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
   if (order.state === 'COMPLETED') return res.json({ data: { orderId, state: 'COMPLETED' }, duplicate: true });
   if (order.state !== 'LANDED') throw new HttpError(409, 'HANDOVER_NOT_READY', 'OTP verification requires a landed order.');
+
+  // Settlement block: prevent order completion/settlement while a relevant dispute is unresolved
+  const { data: orderDisputes, error: disputesError } = await supabase()
+    .from('disputes')
+    .select('id, status')
+    .eq('order_id', orderId);
+  if (disputesError) throw disputesError;
+  const settlementCheck = checkSettlementBlock(orderDisputes ?? []);
+  if (settlementCheck.blocked) {
+    throw new HttpError(409, 'DISPUTE_ACTIVE_SETTLEMENT_BLOCKED', settlementCheck.reason);
+  }
   const { data: challenges, error: challengeError } = await supabase().from('otp_challenges')
     .select('*').eq('order_id', orderId).eq('recipient_user_id', req.user.id).is('consumed_at', null)
     .gte('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(5);
@@ -1022,4 +1265,70 @@ apiRouter.post('/admin/profiles/:id/kyc-review', requireAuth, requireRole('admin
   });
   if (error) throw new HttpError(409, 'KYC_REVIEW_FAILED', 'KYC decision could not be recorded. Confirm the account is a traveller with submitted KYC.');
   res.json({ data });
+});
+
+/* ------------------------------------------------------------------ */
+/* Dispute inspection for participants                                 */
+/* ------------------------------------------------------------------ */
+
+apiRouter.get('/orders/:id/disputes', requireAuth, async (req, res) => {
+  const orderId = z.string().uuid().parse(req.params.id);
+  const { data: order, error } = await supabase()
+    .from('orders')
+    .select('id, buyer_id, traveller_id')
+    .eq('id', orderId)
+    .single();
+  if (error || !order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
+  if (![order.buyer_id, order.traveller_id].includes(req.user.id) && req.profile?.role !== 'admin') {
+    throw new HttpError(403, 'FORBIDDEN', 'You do not have access to disputes for this order.');
+  }
+  const { data: disputes, error: disputesError } = await supabase()
+    .from('disputes')
+    .select('id, order_id, amount_paise, currency, reason, status, evidence_deadline, created_at, resolved_at')
+    .eq('order_id', orderId)
+    .order('created_at', { ascending: false });
+  if (disputesError) throw disputesError;
+  res.json({ data: disputes ?? [] });
+});
+
+apiRouter.get('/disputes/:disputeId/evidence/:evidenceId/download', requireAuth, async (req, res) => {
+  const disputeId = z.string().uuid().parse(req.params.disputeId);
+  const evidenceId = z.string().uuid().parse(req.params.evidenceId);
+
+  const { data: dispute, error: disputeError } = await supabase()
+    .from('disputes')
+    .select('id, order_id')
+    .eq('id', disputeId)
+    .single();
+  if (disputeError || !dispute) throw new HttpError(404, 'DISPUTE_NOT_FOUND', 'Dispute not found.');
+
+  const { data: order, error: orderError } = await supabase()
+    .from('orders')
+    .select('id, buyer_id, traveller_id')
+    .eq('id', dispute.order_id)
+    .single();
+  if (orderError || !order) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
+
+  if (![order.buyer_id, order.traveller_id].includes(req.user.id) && req.profile?.role !== 'admin') {
+    throw new HttpError(403, 'FORBIDDEN', 'You are not authorized to access this dispute evidence.');
+  }
+
+  const { data: evidence, error: evidenceError } = await supabase()
+    .from('dispute_evidence')
+    .select('*')
+    .eq('id', evidenceId)
+    .eq('dispute_id', disputeId)
+    .single();
+  if (evidenceError || !evidence) throw new HttpError(404, 'EVIDENCE_NOT_FOUND', 'Evidence not found.');
+
+  const { data: signed, error: signError } = await supabase()
+    .storage
+    .from('order_evidence')
+    .createSignedUrl(evidence.storage_path, 60);
+
+  if (signError || !signed?.signedUrl) {
+    throw new HttpError(503, 'DOWNLOAD_URL_FAILED', 'Could not generate a download URL.');
+  }
+
+  res.json({ data: { downloadUrl: signed.signedUrl, expiresIn: 60 } });
 });

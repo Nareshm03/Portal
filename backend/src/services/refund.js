@@ -102,7 +102,17 @@ export function checkCancellationEligibility(order, userId, userRole) {
  */
 export function getRefundableAmount(order, capturedAmountPaise, existingRefunds = []) {
   const upfrontPaise = Number(order.upfront_paise ?? 0);
-  const refundable = Math.min(Number(capturedAmountPaise), upfrontPaise);
+  let capturedTotal = 0;
+  if (Array.isArray(capturedAmountPaise)) {
+    for (const intent of capturedAmountPaise) {
+      if (intent.status === 'CAPTURED') {
+        capturedTotal += Number(intent.amount_paise ?? 0);
+      }
+    }
+  } else {
+    capturedTotal = Number(capturedAmountPaise ?? 0);
+  }
+  const refundable = Math.min(capturedTotal, upfrontPaise);
   let refundedTotal = 0;
   for (const refund of existingRefunds) {
     if (refund.status === 'COMPLETED') {

@@ -22,6 +22,7 @@ export const IssueCategory = Object.freeze({
   UNPROCESSED_WEBHOOK:               'UNPROCESSED_WEBHOOK',
   DUPLICATE_PAYMENT_INTENT:          'DUPLICATE_PAYMENT_INTENT',
   DISPUTED_ORDER_WITH_SETTLEMENT:    'DISPUTED_ORDER_WITH_SETTLEMENT',
+  DISPUTE_AMOUNT_MISMATCH:           'DISPUTE_AMOUNT_MISMATCH',
   QUERY_FAILURE:                     'QUERY_FAILURE',
 });
 
@@ -251,6 +252,31 @@ export function checkDisputedOrderSettlement(disputedOrders, ledgerByOrderId) {
         IssueCategory.DISPUTED_ORDER_WITH_SETTLEMENT,
         { orderId: order.id },
         'A disputed order has an ORDER_SETTLED ledger transaction. Settlement should never happen while a dispute is open. Immediate manual review required.'
+      ));
+    }
+  }
+  return issues;
+}
+
+/**
+ * Check 10: For every dispute, verify its amount does not exceed the captured payment amount.
+ *
+ * @param {object[]} disputes
+ * @param {Map<string,object>} ordersById
+ * @param {Map<string,object[]>} capturedIntentsByOrderId
+ * @returns {object[]} issues
+ */
+export function checkDisputeReconciliation(disputes = [], ordersById = new Map(), capturedIntentsByOrderId = new Map()) {
+  const issues = [];
+  for (const dispute of disputes) {
+    const order = ordersById.get(dispute.order_id);
+    const intents = capturedIntentsByOrderId.get(dispute.order_id) ?? [];
+    const totalCaptured = intents.reduce((sum, i) => sum + Number(i.amount_paise ?? 0), 0) || Number(order?.upfront_paise ?? 0);
+    if (totalCaptured > 0 && Number(dispute.amount_paise) > totalCaptured) {
+      issues.push(makeIssue(
+        IssueCategory.DISPUTE_AMOUNT_MISMATCH,
+        { disputeId: dispute.id, orderId: dispute.order_id, disputeAmount: dispute.amount_paise, capturedAmount: totalCaptured },
+        `Dispute amount ${dispute.amount_paise} exceeds captured payment ${totalCaptured}. Immediate investigation required.`
       ));
     }
   }

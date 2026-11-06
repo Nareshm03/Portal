@@ -15,6 +15,7 @@ export const MESSAGE_PAGE_MAX = 100;
  * Used when MOCK_MESSAGING is true and Supabase is unavailable.
  * All state lives in module memory; it resets when the module is reloaded.
  * ---------------------------------------------------------------------------
+ */
 
 const demoConvs = new Map();   // id -> conversation row
 const demoMsgs = new Map();    // id -> message row

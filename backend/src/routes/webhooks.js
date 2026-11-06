@@ -3,6 +3,15 @@ import { createHash } from 'node:crypto';
 import { getSupabase } from '../config/supabase.js';
 import { verifyWebhookSignature } from '../services/razorpay.js';
 import { postCollectionLedger, postRefundLedger } from '../services/ledger.js';
+import {
+  parseRazorpayDisputeEvent,
+  validateDisputeData,
+  buildDisputeEvent,
+  VALID_TRANSITIONS,
+  postDisputeLostLedger,
+  recordDisputeWonEvent,
+  reconcileDisputeAmount,
+} from '../services/disputes.js';
 import { logger } from '../config/logger.js';
 
 export const webhookRouter = Router();
@@ -95,6 +104,168 @@ webhookRouter.post('/razorpay', async (req, res, next) => {
               }
             }
           }
+        }
+      }
+    }
+
+    // Handle dispute webhook events (dispute.created, dispute.won, dispute.lost, etc.)
+    const disputeParsed = parseRazorpayDisputeEvent(payload, eventType);
+    if (disputeParsed && disputeParsed.providerDisputeId) {
+      const { data: existingDispute, error: disputeLookupError } = await supabase
+        .from('disputes')
+        .select('*')
+        .eq('provider', 'RAZORPAY')
+        .eq('provider_dispute_id', disputeParsed.providerDisputeId)
+        .maybeSingle();
+      if (disputeLookupError) throw disputeLookupError;
+
+      if (!existingDispute) {
+        let intentQuery = supabase.from('payment_intents').select('id, order_id, buyer_id, amount_paise, status');
+        if (disputeParsed.providerPaymentId) {
+          intentQuery = intentQuery.eq('provider_payment_id', disputeParsed.providerPaymentId);
+        } else if (disputeParsed.providerOrderId) {
+          intentQuery = intentQuery.eq('provider_order_id', disputeParsed.providerOrderId);
+        }
+        const { data: intent, error: intentLookupError } = await intentQuery.maybeSingle();
+        if (intentLookupError) throw intentLookupError;
+
+        if (intent) {
+          const recon = reconcileDisputeAmount(disputeParsed.amountPaise, intent.amount_paise);
+          if (!recon.valid) {
+            logger.warn({ disputeAmount: disputeParsed.amountPaise, capturedAmount: intent.amount_paise, reason: recon.reason }, 'dispute_amount_reconciliation_warning');
+          }
+
+          const validatedData = validateDisputeData({
+            orderId: intent.order_id,
+            paymentIntentId: intent.id,
+            provider: 'RAZORPAY',
+            providerDisputeId: disputeParsed.providerDisputeId,
+            providerPaymentId: disputeParsed.providerPaymentId,
+            providerOrderId: disputeParsed.providerOrderId,
+            amountPaise: disputeParsed.amountPaise,
+            currency: disputeParsed.currency,
+            reason: disputeParsed.reason,
+            evidenceDeadline: disputeParsed.evidenceDeadline,
+            metadata: disputeParsed.metadata,
+          });
+
+          const { data: newDispute, error: insertDisputeError } = await supabase
+            .from('disputes')
+            .insert({
+              ...validatedData,
+              status: disputeParsed.targetStatus,
+            })
+            .select()
+            .single();
+
+          if (insertDisputeError) {
+            if (insertDisputeError.code !== '23505') throw insertDisputeError;
+          } else if (newDispute) {
+            await supabase.from('dispute_events').insert(
+              buildDisputeEvent({
+                disputeId: newDispute.id,
+                fromStatus: null,
+                toStatus: disputeParsed.targetStatus,
+                eventType,
+                note: `Dispute created via webhook (${eventType}).`,
+                metadata: { providerEventId, phase: disputeParsed.phase },
+              })
+            );
+
+            const { error: transitionError } = await supabase.rpc('transition_order', {
+              p_order_id: intent.order_id,
+              p_to_state: 'DISPUTED',
+              p_actor_id: intent.buyer_id,
+              p_note: 'Dispute opened via Razorpay webhook.',
+            });
+            if (transitionError && !String(transitionError.message).includes('invalid transition')) {
+              logger.warn({ err: transitionError, orderId: intent.order_id }, 'dispute_order_transition_skipped');
+            }
+          }
+        }
+      } else {
+        const currentStatus = existingDispute.status;
+        const targetStatus = disputeParsed.targetStatus;
+
+        if (currentStatus === targetStatus) {
+          if (disputeParsed.evidenceDeadline && disputeParsed.evidenceDeadline !== existingDispute.evidence_deadline) {
+            await supabase
+              .from('disputes')
+              .update({ evidence_deadline: disputeParsed.evidenceDeadline, updated_at: new Date().toISOString() })
+              .eq('id', existingDispute.id);
+          }
+        } else if (VALID_TRANSITIONS[currentStatus]?.has(targetStatus)) {
+          const updateFields = {
+            status: targetStatus,
+            updated_at: new Date().toISOString(),
+          };
+          if (disputeParsed.evidenceDeadline) {
+            updateFields.evidence_deadline = disputeParsed.evidenceDeadline;
+          }
+          if (targetStatus === 'CLOSED' || targetStatus === 'WON' || targetStatus === 'LOST') {
+            updateFields.resolved_at = new Date().toISOString();
+          }
+
+          const { error: updateError } = await supabase
+            .from('disputes')
+            .update(updateFields)
+            .eq('id', existingDispute.id);
+          if (updateError) throw updateError;
+
+          await supabase.from('dispute_events').insert(
+            buildDisputeEvent({
+              disputeId: existingDispute.id,
+              fromStatus: currentStatus,
+              toStatus: targetStatus,
+              eventType,
+              note: `Status updated to ${targetStatus} via webhook (${eventType}).`,
+              metadata: { providerEventId, phase: disputeParsed.phase },
+            })
+          );
+
+          if (targetStatus === 'LOST') {
+            const { data: order, error: orderLookupError } = await supabase
+              .from('orders')
+              .select('id, state, buyer_id, upfront_paise, provider')
+              .eq('id', existingDispute.order_id)
+              .single();
+            if (orderLookupError) throw orderLookupError;
+
+            const { data: existingLossLedger, error: ledgerLookupError } = await supabase
+              .from('ledger_transactions')
+              .select('id')
+              .eq('order_id', existingDispute.order_id)
+              .eq('event_type', 'DISPUTE_LOST')
+              .maybeSingle();
+            if (ledgerLookupError) throw ledgerLookupError;
+
+            if (!existingLossLedger && order) {
+              await postDisputeLostLedger(
+                supabase,
+                order,
+                existingDispute.id,
+                existingDispute.amount_paise,
+                order.buyer_id
+              );
+            }
+          } else if (targetStatus === 'WON') {
+            await recordDisputeWonEvent(
+              supabase,
+              existingDispute.order_id,
+              existingDispute.id,
+              existingDispute.buyer_id ?? null
+            );
+          }
+        } else {
+          logger.warn(
+            {
+              currentStatus,
+              targetStatus,
+              providerDisputeId: disputeParsed.providerDisputeId,
+              providerEventId,
+            },
+            'dispute_webhook_out_of_order_skipped'
+          );
         }
       }
     }

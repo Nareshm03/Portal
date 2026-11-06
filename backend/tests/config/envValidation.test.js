@@ -175,6 +175,7 @@ test('production: valid configuration loads successfully', () => {
     SUPABASE_SERVICE_ROLE_KEY: 'fake-service-role-key-for-testing',
     OTP_PEPPER: 'strong-production-otp-pepper-at-least-32-chars-long',
     MOCK_PAYMENTS: 'false',
+    MOCK_MESSAGING: 'false',
     PAYMENTS_ENABLED: 'false',
     OTP_PROVIDER: 'msg91',
     MSG91_AUTH_KEY: 'fake-msg91-auth-key',

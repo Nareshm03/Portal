@@ -95,16 +95,13 @@ returns trigger language plpgsql as $$
 declare
   v_valid boolean;
 begin
-  if tg_op = 'INSERT' then
-    if new.from_status is not null or new.to_status is null then
-      raise exception 'dispute event must have a to_status and no from_status on insert';
+  if new.from_status is null then
+    if new.to_status is null then
+      raise exception 'dispute event must have a to_status';
     end if;
     return new;
   end if;
-  -- UPDATE: only allow status transitions
-  if new.from_status is null or new.to_status is null then
-    raise exception 'dispute event requires both from_status and to_status';
-  end if;
+
   case new.from_status
     when 'CREATED' then v_valid := new.to_status in ('UNDER_REVIEW', 'ACTION_REQUIRED', 'CLOSED');
     when 'UNDER_REVIEW' then v_valid := new.to_status in ('ACTION_REQUIRED', 'WON', 'LOST', 'CLOSED');
@@ -123,5 +120,75 @@ $$;
 create trigger dispute_event_transition before insert or update on public.dispute_events
 for each row execute function public.enforce_dispute_transition();
 
+-- ---------------------------------------------------------------------------
+-- Row Level Security & Access Control
+-- ---------------------------------------------------------------------------
+
+alter table public.disputes enable row level security;
+alter table public.dispute_events enable row level security;
+alter table public.dispute_evidence enable row level security;
+
+-- Disputes select policy: order participants and active admins
+create policy disputes_select_participants on public.disputes for select to authenticated
+  using (
+    exists (
+      select 1 from public.orders o
+      where o.id = order_id
+        and (o.buyer_id = auth.uid() or o.traveller_id = auth.uid())
+    )
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'admin'
+        and p.account_status = 'ACTIVE'
+    )
+  );
+
+-- Dispute events select policy: order participants and active admins
+create policy dispute_events_select_participants on public.dispute_events for select to authenticated
+  using (
+    exists (
+      select 1 from public.disputes d
+      join public.orders o on o.id = d.order_id
+      where d.id = dispute_id
+        and (o.buyer_id = auth.uid() or o.traveller_id = auth.uid())
+    )
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'admin'
+        and p.account_status = 'ACTIVE'
+    )
+  );
+
+-- Dispute evidence select policy: order participants and active admins
+create policy dispute_evidence_select_participants on public.dispute_evidence for select to authenticated
+  using (
+    exists (
+      select 1 from public.disputes d
+      join public.orders o on o.id = d.order_id
+      where d.id = dispute_id
+        and (o.buyer_id = auth.uid() or o.traveller_id = auth.uid())
+    )
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'admin'
+        and p.account_status = 'ACTIVE'
+    )
+  );
+
+-- Grants
+grant all on public.disputes to service_role;
+grant select on public.disputes to anon, authenticated;
+
+grant all on public.dispute_events to service_role;
+grant select on public.dispute_events to anon, authenticated;
+
+grant all on public.dispute_evidence to service_role;
+grant select on public.dispute_evidence to anon, authenticated;
+
+grant usage, select on all sequences in schema public to service_role;
+
 -- Settlement block check: no ORDER_SETTLED ledger for disputed orders
--- (enforced by reconciliation service; no DB-level block to preserve flexibility)
+-- (enforced by reconciliation service and API layer; no DB-level block to preserve flexibility)

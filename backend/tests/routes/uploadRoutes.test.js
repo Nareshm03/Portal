@@ -31,8 +31,15 @@ function buildMock() {
     profiles: { data: [profileRow(BUYER_ID, 'buyer', 'ACTIVE', 'VERIFIED')], error: null },
     order_evidence: { data: [], error: null }
   });
-  // Delegate storage calls to the real client so createSignedUploadUrl/list/createSignedUrl work.
-  mock.storage = REAL_CLIENT.storage;
+  // Delegate storage calls to mock storage when network is offline/unavailable.
+  const mockStorageBucket = {
+    createSignedUploadUrl: async (path) => ({ data: { signedUrl: `https://mock-storage.supabase.co/${path}`, token: 'mock-token' }, error: null }),
+    list: async () => ({ data: [], error: null }),
+    createSignedUrl: async (path) => ({ data: { signedUrl: `https://mock-storage.supabase.co/download/${path}` }, error: null }),
+  };
+  mock.storage = {
+    from: () => mockStorageBucket,
+  };
   return mock;
 }
 

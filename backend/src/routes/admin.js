@@ -22,6 +22,7 @@ import {
   buildTransactionSummary,
   buildExceptionFlags,
   buildListRow,
+  redactSensitive,
   MAX_PAGE_LIMIT,
 } from '../services/monitoring.js';
 import {
@@ -30,6 +31,12 @@ import {
   checkSettlementLedger,
   checkDisputedOrderSettlement,
 } from '../services/reconciliation.js';
+import {
+  DISPUTE_STATUSES,
+  buildDisputeTimeline,
+  buildDisputeFinancialImpact,
+  buildDisputeEvent,
+} from '../services/disputes.js';
 
 export const adminRouter = Router();
 const supabase = () => getSupabase();
@@ -249,4 +256,194 @@ adminRouter.get('/admin/transactions/:orderId/summary', async (req, res) => {
       hasExceptions: exceptions.length > 0,
     },
   });
+});
+
+/* ------------------------------------------------------------------
+ * GET /api/v1/admin/disputes
+ *
+ * Query params:
+ *   limit     1–100 (default 25)
+ *   offset    integer >= 0 (default 0)
+ *   status    DISPUTE_STATUSES value
+ *   orderId   UUID
+ *   provider  'RAZORPAY' | 'MOCK'
+ *   from      ISO 8601 date — created_at >=
+ *   to        ISO 8601 date — created_at <=
+ * ------------------------------------------------------------------ */
+adminRouter.get('/admin/disputes', async (req, res) => {
+  const querySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(MAX_PAGE_LIMIT).default(25),
+    offset: z.coerce.number().int().min(0).default(0),
+    status: z.enum(DISPUTE_STATUSES).optional(),
+    orderId: z.string().uuid().optional(),
+    provider: z.enum(['RAZORPAY', 'MOCK']).optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+  });
+  const params = querySchema.parse(req.query);
+  const limit = clampPageLimit(params.limit);
+  const offset = params.offset ?? 0;
+
+  let query = supabase().from('disputes')
+    .select('id, order_id, payment_intent_id, provider, provider_dispute_id, provider_payment_id, provider_order_id, amount_paise, currency, reason, status, evidence_deadline, evidence_submitted_at, resolved_at, resolution_note, created_at, updated_at', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (params.status) query = query.eq('status', params.status);
+  if (params.orderId) query = query.eq('order_id', params.orderId);
+  if (params.provider) query = query.eq('provider', params.provider);
+  if (params.from) query = query.gte('created_at', params.from);
+  if (params.to) query = query.lte('created_at', params.to);
+
+  const { data: disputes, count: dbCount, error } = await query;
+  if (error) throw error;
+
+  const rows = (disputes ?? []).map((d) => redactSensitive(d));
+  res.json({ data: rows, total: dbCount ?? rows.length, offset, limit });
+});
+
+/* ------------------------------------------------------------------
+ * GET /api/v1/admin/disputes/:disputeId
+ *
+ * Full dispute inspection: details, frozen financial impact,
+ * evidence records, and chronological audit timeline.
+ * ------------------------------------------------------------------ */
+adminRouter.get('/admin/disputes/:disputeId', async (req, res) => {
+  const disputeId = z.string().uuid().parse(req.params.disputeId);
+
+  const { data: dispute, error: disputeError } = await supabase()
+    .from('disputes')
+    .select('*')
+    .eq('id', disputeId)
+    .single();
+  if (disputeError || !dispute) throw new HttpError(404, 'DISPUTE_NOT_FOUND', 'Dispute not found.');
+
+  const [orderResult, eventsResult, evidenceResult, ledgerResult] = await Promise.allSettled([
+    supabase().from('orders')
+      .select('id, state, buyer_id, traveller_id, upfront_paise, total_paise, currency, created_at')
+      .eq('id', dispute.order_id)
+      .single(),
+    supabase().from('dispute_events')
+      .select('id, dispute_id, from_status, to_status, event_type, actor_id, note, created_at')
+      .eq('dispute_id', disputeId)
+      .order('created_at', { ascending: true })
+      .limit(500),
+    supabase().from('dispute_evidence')
+      .select('id, dispute_id, storage_path, original_filename, mime_type, size_bytes, uploaded_by, description, created_at')
+      .eq('dispute_id', disputeId)
+      .order('created_at', { ascending: true })
+      .limit(100),
+    supabase().from('ledger_transactions')
+      .select('id, order_id, event_type, idempotency_key, created_at')
+      .eq('order_id', dispute.order_id)
+      .limit(500),
+  ]);
+
+  const order = orderResult.status === 'fulfilled' ? orderResult.value?.data : null;
+  const events = eventsResult.status === 'fulfilled' ? (eventsResult.value?.data ?? []) : [];
+  const evidence = evidenceResult.status === 'fulfilled' ? (evidenceResult.value?.data ?? []) : [];
+  const ledgerTxns = ledgerResult.status === 'fulfilled' ? (ledgerResult.value?.data ?? []) : [];
+
+  const timeline = buildDisputeTimeline(events, evidence);
+  const financialImpact = order ? buildDisputeFinancialImpact(dispute, order, ledgerTxns) : null;
+
+  res.json({
+    data: {
+      ...redactSensitive(dispute),
+      order: order ? redactSensitive(order) : null,
+      financialImpact,
+      timeline,
+      evidence,
+      instruction: 'Review dispute evidence and timeline before deciding whether to contest or accept via provider portal. No automated accept/contest actions are performed.',
+    },
+  });
+});
+
+/* ------------------------------------------------------------------
+ * POST /api/v1/admin/disputes/:disputeId/evidence
+ *
+ * Link uploaded evidence from private Supabase Storage to the dispute record.
+ * ------------------------------------------------------------------ */
+adminRouter.post('/admin/disputes/:disputeId/evidence', async (req, res) => {
+  const disputeId = z.string().uuid().parse(req.params.disputeId);
+  const bodySchema = z.object({
+    storagePath: z.string().min(1).max(500),
+    originalFilename: z.string().min(1).max(255),
+    mimeType: z.string().min(3).max(100),
+    sizeBytes: z.number().int().positive(),
+    description: z.string().max(500).optional(),
+  });
+  const body = bodySchema.parse(req.body);
+
+  const { data: dispute, error: disputeError } = await supabase()
+    .from('disputes')
+    .select('id, status, order_id')
+    .eq('id', disputeId)
+    .single();
+  if (disputeError || !dispute) throw new HttpError(404, 'DISPUTE_NOT_FOUND', 'Dispute not found.');
+
+  const { data: evidence, error: insertError } = await supabase()
+    .from('dispute_evidence')
+    .insert({
+      dispute_id: disputeId,
+      storage_path: body.storagePath,
+      original_filename: body.originalFilename,
+      mime_type: body.mimeType,
+      size_bytes: body.sizeBytes,
+      uploaded_by: req.user.id,
+      description: body.description ?? null,
+    })
+    .select()
+    .single();
+  if (insertError) throw insertError;
+
+  // Insert audit event
+  await supabase().from('dispute_events').insert(
+    buildDisputeEvent({
+      disputeId,
+      fromStatus: dispute.status,
+      toStatus: dispute.status,
+      eventType: 'EVIDENCE_SUBMITTED',
+      actorId: req.user.id,
+      note: `Evidence uploaded: ${body.originalFilename} (${body.mimeType}, ${body.sizeBytes} bytes)`,
+    })
+  );
+
+  // Mark evidence_submitted_at if not set
+  await supabase().from('disputes').update({
+    evidence_submitted_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', disputeId);
+
+  res.status(201).json({ data: evidence });
+});
+
+/* ------------------------------------------------------------------
+ * GET /api/v1/admin/disputes/:disputeId/evidence/:evidenceId/download
+ *
+ * Generate a short-lived signed download URL for dispute evidence.
+ * ------------------------------------------------------------------ */
+adminRouter.get('/admin/disputes/:disputeId/evidence/:evidenceId/download', async (req, res) => {
+  const disputeId = z.string().uuid().parse(req.params.disputeId);
+  const evidenceId = z.string().uuid().parse(req.params.evidenceId);
+
+  const { data: evidence, error: evidenceError } = await supabase()
+    .from('dispute_evidence')
+    .select('*')
+    .eq('id', evidenceId)
+    .eq('dispute_id', disputeId)
+    .single();
+  if (evidenceError || !evidence) throw new HttpError(404, 'EVIDENCE_NOT_FOUND', 'Evidence not found.');
+
+  const { data: signed, error: signError } = await supabase()
+    .storage
+    .from('order_evidence')
+    .createSignedUrl(evidence.storage_path, 60);
+
+  if (signError || !signed?.signedUrl) {
+    logger.error({ err: signError, storagePath: evidence.storage_path }, 'dispute_evidence_download_sign_failed');
+    throw new HttpError(503, 'DOWNLOAD_URL_FAILED', 'Could not generate a download URL.');
+  }
+
+  res.json({ data: { downloadUrl: signed.signedUrl, expiresIn: 60 } });
 });
