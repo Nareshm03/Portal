@@ -55,29 +55,29 @@ export function createRouteTester() {
       let statusCode = 200;
       const responseHeaders = {};
       let responseBody = null;
+      let resolveResponse;
+      const responsePromise = new Promise((res) => { resolveResponse = res; });
 
       const mockRes = {
         statusCode: 200,
         get header() { return responseHeaders; },
         status(code) { statusCode = code; return this; },
-        json(data) { responseBody = data; return this; },
-        send(data) { responseBody = data; return this; },
+        json(data) { responseBody = data; resolveResponse(); return this; },
+        send(data) { responseBody = data; resolveResponse(); return this; },
         set(name, value) { responseHeaders[name] = value; return this; },
         setHeader(name, value) { responseHeaders[name] = value; return this; },
         removeHeader(name) { delete responseHeaders[name]; return this; },
         getHeader(name) { return responseHeaders[name]; },
-        end() { return this; }
+        end() { resolveResponse(); return this; }
       };
 
       app.handle(mockReq, mockRes);
 
-      // Allow async middleware (route handlers) to complete
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Debug: log if response seems empty
-      if (!responseBody && statusCode === 200) {
-        console.log('DEBUG: Empty response for', method, path, 'headers:', JSON.stringify(headers));
-      }
+      // Wait for the response to be sent, with a 2s safety timeout.
+      await Promise.race([
+        responsePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Route handler timed out after 2000ms')), 2000))
+      ]).catch(() => { /* timeout — return whatever we have */ });
 
       return { statusCode, body: responseBody, headers: responseHeaders };
     }

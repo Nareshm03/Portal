@@ -189,9 +189,9 @@ uploadRouter.post('/orders/:id/uploads/sign', requireAuth, requireRole('buyer', 
   const uploadId = randomUUID();
   const storagePath = buildStoragePath(orderId, uploadId);
 
-  const { data: signed, error: signError } = supabase().storage.from(EVIDENCE_BUCKET).createSignedUploadUrl(storagePath);
+  const { data: signed, error: signError } = await supabase().storage.from(EVIDENCE_BUCKET).createSignedUploadUrl(storagePath);
   if (signError || !signed) {
-    logger.error({ err: signError, orderId, storagePath }, 'signed_upload_url_failed');
+    logger.error({ err: signError, orderId, storagePath, errorName: signError?.constructor?.name, errorMessage: signError?.message, errorStatus: signError?.statusCode, hasSigned: !!signed }, 'signed_upload_url_failed');
     throw new HttpError(503, 'UPLOAD_SIGN_FAILED', 'Could not create a signed upload URL.', { cause: signError?.message });
   }
 
@@ -235,7 +235,7 @@ uploadRouter.post('/orders/:id/uploads/complete', requireAuth, requireRole('buye
 
   const folder = storageFolder(evidence.storage_path);
   const baseName = storageBasename(evidence.storage_path);
-  const { data: files, error: listError } = supabase().storage.from(EVIDENCE_BUCKET).list(folder, { limit: 100, search: baseName });
+  const { data: files, error: listError } = await supabase().storage.from(EVIDENCE_BUCKET).list(folder, { limit: 100, search: baseName });
   if (listError) {
     logger.error({ err: listError, orderId, storagePath: evidence.storage_path }, 'upload_verify_list_failed');
     throw new HttpError(503, 'UPLOAD_VERIFY_FAILED', 'Could not verify the uploaded object.', { cause: listError.message });
@@ -280,7 +280,7 @@ uploadRouter.get('/orders/:id/uploads/:uploadId/download-url', requireAuth, requ
   const order = await getOrderOr404(evidence.order_id);
   authorizeOrder(order, req);
 
-  const { data: signed, error: signError } = supabase().storage.from(EVIDENCE_BUCKET)
+  const { data: signed, error: signError } = await supabase().storage.from(EVIDENCE_BUCKET)
     .createSignedUrl(evidence.storage_path, SIGNED_URL_TTL_SECONDS, { download: evidence.original_filename });
   if (signError || !signed) {
     logger.error({ err: signError, uploadId }, 'signed_download_url_failed');

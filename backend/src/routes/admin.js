@@ -37,9 +37,8 @@ const supabase = () => getSupabase();
 // All admin routes require authentication and an active admin role.
 adminRouter.use('/admin', requireAuth, requireRole('admin'));
 
-const ORDER_STATES = ['ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED'];
+const ORDER_STATES = ['ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED', 'CANCELLED', 'REFUNDED'];
 const PAYMENT_STATUSES = ['CREATING', 'CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'];
-const PAGE_LIMIT = 500;
 
 /* ------------------------------------------------------------------
  * GET /api/v1/admin/transactions
@@ -66,8 +65,9 @@ adminRouter.get('/admin/transactions', async (req, res) => {
   const offset = params.offset ?? 0;
 
   // Build orders query with optional filters.
+  // count:'exact' returns the total matching rows across all pages alongside the page slice.
   let ordersQuery = supabase().from('orders')
-    .select('id, state, buyer_id, traveller_id, subtotal_paise, platform_fee_paise, total_paise, deposit_paise, duty_paise, traveller_reward_paise, upfront_paise, balance_paise, currency, payment_deadline, forfeit_at, created_at, updated_at')
+    .select('id, state, buyer_id, traveller_id, subtotal_paise, platform_fee_paise, total_paise, deposit_paise, duty_paise, traveller_reward_paise, upfront_paise, balance_paise, currency, payment_deadline, forfeit_at, created_at, updated_at', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -75,53 +75,62 @@ adminRouter.get('/admin/transactions', async (req, res) => {
   if (params.from) ordersQuery = ordersQuery.gte('created_at', params.from);
   if (params.to) ordersQuery = ordersQuery.lte('created_at', params.to);
 
-  const { data: orders, error: ordersError } = await ordersQuery;
+  const { data: orders, count: dbCount, error: ordersError } = await ordersQuery;
   if (ordersError) throw ordersError;
-  if (!orders?.length) return res.json({ data: [], total: 0, offset, limit });
+  if (!orders?.length) return res.json({ data: [], total: dbCount ?? 0, offset, limit });
 
-  const orderIds = orders.map((o) => o.id);
+  // Fetch payment intents and ledger transactions per-order in parallel.
+  // Per-order fetching eliminates the silent PAGE_LIMIT=500 truncation risk
+  // that a single batched .in() query carries when child rows exceed the cap.
+  const [intentsResults, ledgerResults] = await Promise.all([
+    Promise.allSettled(orders.map((o) => {
+      let q = supabase().from('payment_intents')
+        .select('id, order_id, provider, status, amount_paise, currency, provider_order_id, created_at, updated_at')
+        .eq('order_id', o.id);
+      if (params.paymentStatus) q = q.eq('status', params.paymentStatus);
+      return q.then((r) => ({ orderId: o.id, ...r }));
+    })),
+    Promise.allSettled(orders.map((o) =>
+      supabase().from('ledger_transactions')
+        .select('id, order_id, event_type, idempotency_key, created_at')
+        .eq('order_id', o.id)
+        .then((r) => ({ orderId: o.id, ...r }))
+    )),
+  ]);
 
-  // Fetch payment intents for these orders.
-  let intentsQuery = supabase().from('payment_intents')
-    .select('id, order_id, provider, status, amount_paise, currency, provider_order_id, created_at, updated_at')
-    .in('order_id', orderIds)
-    .limit(PAGE_LIMIT);
-  if (params.paymentStatus) intentsQuery = intentsQuery.eq('status', params.paymentStatus);
-
-  const { data: intents, error: intentsError } = await intentsQuery;
-  if (intentsError) {
-    logger.warn({ err: intentsError }, 'admin_transactions_intent_fetch_failed');
-  }
-
-  // Fetch ledger transaction headers (no entries needed for the list).
-  const { data: ledgerTxns, error: ledgerError } = await supabase().from('ledger_transactions')
-    .select('id, order_id, event_type, idempotency_key, created_at')
-    .in('order_id', orderIds)
-    .limit(PAGE_LIMIT);
-  if (ledgerError) {
-    logger.warn({ err: ledgerError }, 'admin_transactions_ledger_fetch_failed');
-  }
-
-  // Group by order_id for O(1) lookup.
+  // Assemble per-order maps; log and skip orders whose child fetches failed.
   const intentsByOrder = new Map();
-  for (const i of intents ?? []) {
-    if (!intentsByOrder.has(i.order_id)) intentsByOrder.set(i.order_id, []);
-    intentsByOrder.get(i.order_id).push(i);
+  for (const result of intentsResults) {
+    if (result.status === 'rejected' || result.value?.error) {
+      logger.warn({ err: result.reason ?? result.value?.error }, 'admin_transactions_intent_fetch_failed');
+      continue;
+    }
+    intentsByOrder.set(result.value.orderId, result.value.data ?? []);
   }
   const ledgerByOrder = new Map();
-  for (const t of ledgerTxns ?? []) {
-    if (!ledgerByOrder.has(t.order_id)) ledgerByOrder.set(t.order_id, []);
-    ledgerByOrder.get(t.order_id).push(t);
+  for (const result of ledgerResults) {
+    if (result.status === 'rejected' || result.value?.error) {
+      logger.warn({ err: result.reason ?? result.value?.error }, 'admin_transactions_ledger_fetch_failed');
+      continue;
+    }
+    ledgerByOrder.set(result.value.orderId, result.value.data ?? []);
   }
 
   const rows = orders.map((o) => buildListRow(o, intentsByOrder.get(o.id) ?? [], ledgerByOrder.get(o.id) ?? []));
 
-  // If paymentStatus filter is active, filter list rows accordingly.
+  // If paymentStatus filter is active, filter list rows accordingly
+  // (paymentStatus is derived from child records, not an orders column).
   const filtered = params.paymentStatus
     ? rows.filter((r) => r.paymentStatus === params.paymentStatus)
     : rows;
 
-  res.json({ data: filtered, total: filtered.length, offset, limit });
+  // dbCount is the total matching orders in the DB for the active filters.
+  // When a paymentStatus filter is applied it further narrows the in-memory
+  // result, so we report filtered.length as the total in that case since
+  // the DB count reflects order-level matches only.
+  const total = params.paymentStatus ? filtered.length : (dbCount ?? filtered.length);
+
+  res.json({ data: filtered, total, offset, limit });
 });
 
 /* ------------------------------------------------------------------
@@ -141,18 +150,21 @@ adminRouter.get('/admin/transactions/:orderId/timeline', async (req, res) => {
 
   // Fetch all timeline sources in parallel — partial failures are logged but
   // still produce a useful (if incomplete) timeline.
+  // Per-order limit of 500 is generous and safe: a single order cannot realistically
+  // produce hundreds of events in each category.
+  const PER_ORDER_LIMIT = 500;
   const [eventsResult, intentsResult, ledgerResult, webhookResult] = await Promise.allSettled([
     supabase().from('order_events')
       .select('from_state, to_state, actor_id, note, created_at')
-      .eq('order_id', orderId).order('created_at', { ascending: true }).limit(PAGE_LIMIT),
+      .eq('order_id', orderId).order('created_at', { ascending: true }).limit(PER_ORDER_LIMIT),
 
     supabase().from('payment_intents')
       .select('id, provider, status, amount_paise, currency, provider_order_id, created_at, updated_at')
-      .eq('order_id', orderId).order('created_at', { ascending: true }).limit(PAGE_LIMIT),
+      .eq('order_id', orderId).order('created_at', { ascending: true }).limit(PER_ORDER_LIMIT),
 
     supabase().from('ledger_transactions')
       .select('id, event_type, idempotency_key, created_at')
-      .eq('order_id', orderId).order('created_at', { ascending: true }).limit(PAGE_LIMIT),
+      .eq('order_id', orderId).order('created_at', { ascending: true }).limit(PER_ORDER_LIMIT),
 
     // Webhook events don't carry order_id directly; skip them here to keep this
     // query fast. Webhooks are visible in the summary endpoint if needed.
@@ -200,10 +212,10 @@ adminRouter.get('/admin/transactions/:orderId/summary', async (req, res) => {
   const [intentsResult, ledgerResult] = await Promise.allSettled([
     supabase().from('payment_intents')
       .select('id, order_id, provider, status, amount_paise, currency, provider_order_id, created_at')
-      .eq('order_id', orderId).limit(PAGE_LIMIT),
+      .eq('order_id', orderId).limit(500),
     supabase().from('ledger_transactions')
       .select('id, order_id, event_type, idempotency_key, created_at')
-      .eq('order_id', orderId).limit(PAGE_LIMIT),
+      .eq('order_id', orderId).limit(500),
   ]);
 
   const intents = intentsResult.status === 'fulfilled' && !intentsResult.value?.error

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createHash } from 'node:crypto';
 import { getSupabase } from '../config/supabase.js';
 import { verifyWebhookSignature } from '../services/razorpay.js';
-import { postCollectionLedger } from '../services/ledger.js';
+import { postCollectionLedger, postRefundLedger } from '../services/ledger.js';
 import { logger } from '../config/logger.js';
 
 export const webhookRouter = Router();
@@ -35,7 +35,9 @@ webhookRouter.post('/razorpay', async (req, res, next) => {
       if (payment?.order_id && payment?.id && payment?.amount && payment?.currency === 'INR') {
         const { data: intent, error: lookupError } = await supabase.from('payment_intents')
           .select('id, order_id, buyer_id, amount_paise, status')
-          .eq('provider_order_id', payment.order_id).eq('provider', 'RAZORPAY').maybeSingle();
+          .eq('provider_order_id', payment.order_id)
+          .in('provider', ['RAZORPAY', 'RAZORPAY_TEST'])
+          .maybeSingle();
         if (lookupError) throw lookupError;
         if (intent && Number(payment.amount) === Number(intent.amount_paise) && payment.status === 'captured') {
           const { error: updateError } = await supabase.from('payment_intents').update({
@@ -47,6 +49,52 @@ webhookRouter.post('/razorpay', async (req, res, next) => {
           });
           if (transitionError && !String(transitionError.message).includes('invalid transition')) throw transitionError;
           if (lockedOrder) await postCollectionLedger(supabase, lockedOrder, intent.buyer_id).catch((e) => logger.error({ err: e, orderId: intent.order_id }, 'webhook_collection_ledger_failed'));
+        }
+      }
+    }
+
+    if (eventType === 'refund.processed') {
+      const refund = payload.payload?.refund?.entity;
+      if (refund?.id && refund?.amount && refund?.currency === 'INR') {
+        // Find the refund record by provider_refund_id
+        const { data: refundRecord, error: lookupError } = await supabase.from('refunds')
+          .select('*').eq('provider_refund_id', refund.id).maybeSingle();
+        if (lookupError) throw lookupError;
+        if (refundRecord && refundRecord.status !== 'COMPLETED') {
+          const refundAmountPaise = Number(refund.amount);
+          const recordAmountPaise = Number(refundRecord.amount_paise ?? 0);
+          if (refundAmountPaise === recordAmountPaise) {
+            const { error: updateError } = await supabase.from('refunds').update({
+              status: 'COMPLETED',
+              updated_at: new Date().toISOString(),
+            }).eq('id', refundRecord.id);
+            if (updateError) throw updateError;
+
+            // Post reversal ledger if not already posted.
+            const { data: order, error: orderLookupError } = await supabase.from('orders')
+              .select('id, state, buyer_id, upfront_paise, provider').eq('id', refundRecord.order_id).single();
+            if (orderLookupError) throw orderLookupError;
+            if (order) {
+              // Check if reversal ledger already posted for this refund
+              const { data: existingLedger, error: ledgerError } = await supabase.from('ledger_transactions')
+                .select('id').eq('order_id', order.id).eq('event_type', 'PAYMENT_REFUNDED').maybeSingle();
+              if (ledgerError) throw ledgerError;
+              if (!existingLedger) {
+                await postRefundLedger(supabase, order, refundRecord.buyer_id, refundAmountPaise);
+              }
+
+              // Transition order to REFUNDED if not already.
+              if (order.state !== 'REFUNDED' && order.state !== 'COMPLETED') {
+                const { error: transitionError } = await supabase.rpc('transition_order', {
+                  p_order_id: refundRecord.order_id,
+                  p_to_state: 'REFUNDED',
+                  p_actor_id: refundRecord.buyer_id,
+                  p_note: 'Refund processed via Razorpay webhook.',
+                });
+                if (transitionError && !String(transitionError.message).includes('invalid transition')) throw transitionError;
+              }
+            }
+          }
         }
       }
     }

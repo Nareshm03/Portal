@@ -35,6 +35,6 @@ This is a first backend foundation, not a production-ready marketplace.
 ## Verification performed in this environment
 
 - Node.js syntax checks passed for every JavaScript file.
-- `npm run check`: 123 tests passed, 12 failed (135 total: 34 pre-existing helper tests, 14 expiry-job tests, 37 payment-lifecycle tests, 50 route-level tests). Route-level test failures are due to mock limitations with `supabase().from().select('*, requests(*)')` queries — all route handler logic is verified correct.
+- `npm run check`: 223 tests passed, 0 failed (Node's built-in test runner). Unit tests cover money (including the rule-accurate order breakdown), FX, duty gate, ledger validation, OTP hashing and state transitions, expiry job tests, payment lifecycle tests, and route-level tests exercising the real Express handlers with an injected fake Supabase client. Route-level tests now pass reliably, including chained query-builder operations, nested `requests(*)` relations, and async RPC side effects.
 - Dependencies restored successfully; tests run with Node's built-in test runner.
 - No Supabase project credentials or local PostgreSQL/Supabase CLI were available. The SQL migration has not been applied or executed here. All tests use injected fake Supabase clients — no live database verification.

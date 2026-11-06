@@ -9,6 +9,103 @@ import { HttpError } from '../utils/httpError.js';
 export const MESSAGE_MAX_LENGTH = 2000;
 export const MESSAGE_PAGE_MAX = 100;
 
+/**
+ * ---------------------------------------------------------------------------
+ * Demo (in-memory) conversation store.
+ * Used when MOCK_MESSAGING is true and Supabase is unavailable.
+ * All state lives in module memory; it resets when the module is reloaded.
+ * ---------------------------------------------------------------------------
+
+const demoConvs = new Map();   // id -> conversation row
+const demoMsgs = new Map();    // id -> message row
+const demoRead = new Map();    // "${conversationId}:${userId}" -> { last_read_seq, updated_at }
+
+let demoSeqCounter = 0;
+
+export function demoNextSeq() {
+  return ++demoSeqCounter;
+}
+
+export function demoCreateConversation(quoteId, buyerId, travellerId) {
+  const id = `demo-conv-${demoConvs.size + 1}`;
+  const now = new Date().toISOString();
+  const row = {
+    id,
+    quote_id: quoteId,
+    buyer_id: buyerId,
+    traveller_id: travellerId,
+    created_at: now,
+  };
+  demoConvs.set(id, row);
+  return row;
+}
+
+export function demoGetConversation(id) {
+  return demoConvs.get(id) ?? null;
+}
+
+export function demoGetConversationByQuote(quoteId) {
+  for (const c of demoConvs.values()) {
+    if (c.quote_id === quoteId) return c;
+  }
+  return null;
+}
+
+export function demoListConversations(userId) {
+  return [...demoConvs.values()].filter(
+    (c) => c.buyer_id === userId || c.traveller_id === userId
+  ).sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+}
+
+export function demoGetMessages(conversationId, limit, beforeSeq) {
+  let rows = [...demoMsgs.values()].filter((m) => m.conversation_id === conversationId);
+  rows.sort((a, b) => Number(b.seq) - Number(a.seq));
+  if (beforeSeq != null) {
+    rows = rows.filter((m) => Number(m.seq) < Number(beforeSeq));
+  }
+  const lim = Math.trunc(Number(limit)) || MESSAGE_PAGE_MAX;
+  const hasMore = rows.length > lim;
+  const page = hasMore ? rows.slice(0, lim) : rows;
+  const nextCursor = hasMore && page.length ? page[page.length - 1].seq : null;
+  return { messages: page, nextCursor, hasMore };
+}
+
+export function demoSendMessage(conversationId, senderId, body) {
+  const seq = demoNextSeq();
+  const now = new Date().toISOString();
+  const id = `demo-msg-${demoMsgs.size + 1}`;
+  const row = {
+    id,
+    conversation_id: conversationId,
+    sender_id: senderId,
+    body,
+    seq,
+    created_at: now,
+  };
+  demoMsgs.set(id, row);
+  return row;
+}
+
+export function demoGetReadState(conversationId, userId) {
+  return demoRead.get(`${conversationId}:${userId}`) ?? { last_read_seq: 0 };
+}
+
+export function demoSetReadState(conversationId, userId, lastReadSeq) {
+  const key = `${conversationId}:${userId}`;
+  demoRead.set(key, {
+    last_read_seq: Number(lastReadSeq),
+    updated_at: new Date().toISOString(),
+  });
+  return demoRead.get(key);
+}
+
+export function demoReset() {
+  demoConvs.clear();
+  demoMsgs.clear();
+  demoRead.clear();
+  demoSeqCounter = 0;
+}
+
 export function isParticipant(conversation, userId) {
   return Boolean(conversation) && (conversation.buyer_id === userId || conversation.traveller_id === userId);
 }

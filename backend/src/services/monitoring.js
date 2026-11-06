@@ -114,18 +114,14 @@ export function buildTimeline({ orderEvents = [], paymentIntents = [], ledgerTra
  * Never returns OTP hashes, raw provider references, or personal data.
  */
 export function buildTransactionSummary(order, capturedIntents, ledgerTransactions) {
-  const LOCKED_OR_AFTER = new Set(['LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED']);
-
   const paymentStatus = (() => {
-    if (!capturedIntents?.length) {
-      const allIntents = capturedIntents ?? [];
-      return 'NONE';
-    }
+    if (!capturedIntents?.length) return 'NONE';
     if (capturedIntents.some((i) => i.status === 'CAPTURED')) return 'CAPTURED';
     if (capturedIntents.some((i) => ['AUTHORIZED', 'CREATED'].includes(i.status))) return 'PENDING';
-    if (capturedIntents.some((i) => ['CREATING'].includes(i.status))) return 'CREATING';
-    if (capturedIntents.every((i) => i.status === 'FAILED')) return 'FAILED';
+    if (capturedIntents.some((i) => i.status === 'CREATING')) return 'CREATING';
+    if (capturedIntents.some((i) => i.status === 'PARTIALLY_REFUNDED')) return 'PARTIALLY_REFUNDED';
     if (capturedIntents.some((i) => i.status === 'REFUNDED')) return 'REFUNDED';
+    if (capturedIntents.every((i) => i.status === 'FAILED')) return 'FAILED';
     return 'UNKNOWN';
   })();
 

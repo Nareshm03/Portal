@@ -378,3 +378,152 @@ test('GET /admin/transactions/:orderId/summary - sensitive fields are not expose
   assert.ok(!text.includes('"raw_provider_reference"'));
   assert.ok(!text.includes('"password"'));
 });
+
+/* ================================================================== */
+/* Pagination total (Fix: correct DB-level count)                     */
+/* ================================================================== */
+
+test('GET /admin/transactions - total reflects DB count, not page size', async () => {
+  // 3 orders exist in DB; page requests only 2. total must be 3, not 2.
+  const orders = [
+    fullOrderRow(testUuid(30), 'LOCKED'),
+    fullOrderRow(testUuid(31), 'LOCKED'),
+    fullOrderRow(testUuid(32), 'ACCEPTED'),
+  ];
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: orders, error: null },
+    payment_intents: { data: [], error: null },
+    ledger_transactions: { data: [], error: null },
+  }));
+  const res = await rt.get('/admin/transactions?limit=2&offset=0', { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  // Page contains 2 rows (range sliced by mock)
+  assert.equal(res.body.data.length, 2);
+  // total must reflect all 3 matching DB records, not just the page size
+  assert.equal(res.body.total, 3, 'total must be DB count (3), not page size (2)');
+  assert.equal(res.body.limit, 2);
+  assert.equal(res.body.offset, 0);
+});
+
+test('GET /admin/transactions - total is 0 for empty result', async () => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [], error: null },
+  }));
+  const res = await rt.get('/admin/transactions', { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.total, 0);
+});
+
+test('GET /admin/transactions - offset advances page window but total is unchanged', async () => {
+  const orders = Array.from({ length: 5 }, (_, i) => fullOrderRow(testUuid(40 + i), 'LOCKED'));
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: orders, error: null },
+    payment_intents: { data: [], error: null },
+    ledger_transactions: { data: [], error: null },
+  }));
+  const res = await rt.get('/admin/transactions?limit=2&offset=2', { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  // Page 2: rows 3–4 of 5
+  assert.equal(res.body.data.length, 2);
+  // total reflects all 5 DB records regardless of offset
+  assert.equal(res.body.total, 5);
+  assert.equal(res.body.offset, 2);
+});
+
+/* ================================================================== */
+/* Per-order child fetching (Fix: no silent 500-row truncation)       */
+/* ================================================================== */
+
+test('GET /admin/transactions - many ledger rows per order are all fetched (no truncation)', async () => {
+  // Simulate two orders each with many ledger transactions.
+  // The old PAGE_LIMIT=500 batch approach would cap at 500 rows total;
+  // the per-order fetch is not subject to that cap.
+  const ORDER_A = testUuid(50);
+  const ORDER_B = testUuid(51);
+  // 300 ledger rows for order A + 300 for order B = 600 total (> old PAGE_LIMIT=500)
+  const ledgerA = Array.from({ length: 300 }, (_, i) =>
+    ledgerTxn(`la${i}`, ORDER_A, i === 0 ? 'PAYMENT_CAPTURED' : 'OTHER', i === 0 ? `order:lock:${ORDER_A}` : `k-a-${i}`)
+  );
+  const ledgerB = Array.from({ length: 300 }, (_, i) =>
+    ledgerTxn(`lb${i}`, ORDER_B, i === 0 ? 'PAYMENT_CAPTURED' : 'OTHER', i === 0 ? `order:lock:${ORDER_B}` : `k-b-${i}`)
+  );
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: {
+      data: [
+        fullOrderRow(ORDER_A, 'LOCKED'),
+        fullOrderRow(ORDER_B, 'LOCKED'),
+      ],
+      error: null,
+    },
+    payment_intents: { data: [], error: null },
+    // Provide all 600 ledger rows — mock will serve per-order via eq('order_id') filter
+    ledger_transactions: { data: [...ledgerA, ...ledgerB], error: null },
+  }));
+  const res = await rt.get('/admin/transactions', { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 2);
+  // Both orders must correctly show collectionLedgerPresent=true
+  // (relies on the PAYMENT_CAPTURED row being visible — it's row 0 of each order's 300)
+  for (const row of res.body.data) {
+    assert.equal(row.collectionLedgerPresent, true,
+      `Order ${row.orderId} must have collectionLedgerPresent=true (300 ledger rows fetched correctly)`);
+  }
+});
+
+test('GET /admin/transactions - partial child-fetch failure does not crash the response', async () => {
+  // Simulate a ledger query failure for one order — route should log warn and
+  // continue, returning the other order with correct data.
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [fullOrderRow(ORDER_ID, 'LOCKED')], error: null },
+    payment_intents: { data: [intentRow(INTENT_ID, ORDER_ID, BUYER_ID, 'MOCK', 'CAPTURED', 42_000, 'prov_1')], error: null },
+    // Ledger query returns an error
+    ledger_transactions: { data: null, error: { message: 'DB connection lost', code: 'PGRST301' } },
+  }));
+  const res = await rt.get('/admin/transactions', { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+  // collectionLedgerPresent will be false (ledger unavailable) — no crash
+  assert.equal(res.body.data[0].collectionLedgerPresent, false);
+});
+
+/* ================================================================== */
+/* PARTIALLY_REFUNDED payment status (Fix: explicit mapping)          */
+/* ================================================================== */
+
+test('GET /admin/transactions - PARTIALLY_REFUNDED intent maps to correct paymentStatus', async () => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [fullOrderRow(ORDER_ID, 'LOCKED')], error: null },
+    payment_intents: {
+      data: [intentRow(INTENT_ID, ORDER_ID, BUYER_ID, 'MOCK', 'PARTIALLY_REFUNDED', 42_000, 'prov_1')],
+      error: null,
+    },
+    ledger_transactions: { data: [], error: null },
+  }));
+  const res = await rt.get('/admin/transactions', { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.length, 1);
+  assert.equal(res.body.data[0].paymentStatus, 'PARTIALLY_REFUNDED',
+    'PARTIALLY_REFUNDED intent must not fall through to UNKNOWN');
+});
+
+test('GET /admin/transactions/:orderId/summary - PARTIALLY_REFUNDED mapped in summary', async () => {
+  injectDb(createMockSupabase({
+    profiles: { data: [profileRow(ADMIN_ID, 'admin', 'ACTIVE', 'VERIFIED')], error: null },
+    orders: { data: [fullOrderRow(ORDER_ID, 'LOCKED')], error: null },
+    payment_intents: {
+      data: [intentRow(INTENT_ID, ORDER_ID, BUYER_ID, 'MOCK', 'PARTIALLY_REFUNDED', 42_000, 'prov_1')],
+      error: null,
+    },
+    ledger_transactions: { data: [], error: null },
+  }));
+  const res = await rt.get(`/admin/transactions/${ORDER_ID}/summary`, { authorization: adminToken() });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.paymentStatus, 'PARTIALLY_REFUNDED');
+  assert.notEqual(res.body.data.paymentStatus, 'UNKNOWN');
+});
