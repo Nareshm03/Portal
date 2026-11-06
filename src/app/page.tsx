@@ -781,7 +781,7 @@ export default function HomePage() {
               applicable law.
             </p>
             <div className="mt-6 flex flex-col gap-2 text-xs text-on-obsidian/35 sm:flex-row sm:items-center sm:justify-between">
-              <span>© {new Date().getFullYear()} Portal. All rights reserved.</span>
+              <span>© 2026 Portal. All rights reserved.</span>
               <span>Prototype — mock verification and payments.</span>
             </div>
           </div>

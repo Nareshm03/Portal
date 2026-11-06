@@ -42,7 +42,7 @@ export default function TravelerLoginPage() {
             </div>
 
             <div className="mt-6 border-t border-border pt-6 text-center text-sm text-muted">
-              Don't have a Traveler account?{" "}
+              Don&apos;t have a Traveler account?{" "}
               <Link
                 href="/traveler/register"
                 className="font-medium text-burgundy transition-colors hover:text-burgundy-deep"

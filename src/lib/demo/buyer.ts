@@ -380,6 +380,26 @@ export const activeOrders: readonly BuyerOrder[] = [
   },
 ];
 
+export const completedOrders: readonly BuyerOrder[] = [
+  {
+    id: "ord-2319",
+    reference: "P-2319",
+    productName: "Diptyque Baies candle",
+    originCity: "Paris",
+    originCountry: "France",
+    destinationAirport: "BOM",
+    imageUrl:
+      "https://images.unsplash.com/photo-1603006905003-be475563bc59?auto=format&fit=crop&w=800&q=80",
+    status: "delivered",
+    stageIndex: 6,
+    handoverDate: "2026-11-08",
+    travelerName: "Priya Desai",
+    amountUsd: 78,
+    escrow: "released",
+    note: "Successfully delivered. Handover completed at BOM Terminal 2 arrivals on 8 November 2026.",
+  },
+];
+
 export const buyerHeroImage =
   "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1600&q=80";
 

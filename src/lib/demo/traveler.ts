@@ -55,7 +55,7 @@ export interface TravelerProfile {
   phone: string;
   baseCity: string;
   baseCountry: string;
-  homeAirport: AirportCode;
+  homeAirport: string;
   memberSince: string;
   tier: string;
   verification: string;
@@ -63,6 +63,12 @@ export interface TravelerProfile {
   carries: number;
   languages: readonly string[];
   bio: string;
+  // Contact verification flags
+  emailVerified?: boolean;
+  phoneVerified?: boolean;
+  locationVerified?: boolean;
+  airportVerified?: boolean;
+  languagesVerified?: boolean;
 }
 
 export const travelerProfile: TravelerProfile = {
@@ -81,6 +87,12 @@ export const travelerProfile: TravelerProfile = {
   carries: 18,
   languages: ["English", "Hindi"],
   bio: "London-based, usually flying home to Mumbai. I travel light and pack carefully — receipts and condition photos come as standard.",
+  // Demo verification status - these would come from backend in production
+  emailVerified: true,
+  phoneVerified: true,
+  locationVerified: true,
+  airportVerified: true,
+  languagesVerified: true,
 };
 
 export interface PassportKycDocument {

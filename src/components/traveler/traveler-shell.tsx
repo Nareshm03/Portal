@@ -12,7 +12,6 @@ import {
   Plane,
   QrCode,
   ReceiptText,
-  Sparkles,
   UserRound,
   Wallet,
   type LucideIcon,
@@ -38,7 +37,7 @@ export type TravelerNavKey =
   | "orders"
   | "proof"
   | "handover"
-  | "earnings"
+  | "payments"
   | "profile";
 
 interface TravelerNavItem {
@@ -76,7 +75,7 @@ const NAV_GROUPS: readonly {
       {
         key: "trips",
         label: "My trips",
-        href: "/traveler/dashboard#trips",
+        href: "/traveler/trips",
         icon: Plane,
         badge: travelerSnapshot.upcomingTrips,
       },
@@ -90,21 +89,21 @@ const NAV_GROUPS: readonly {
       {
         key: "quotes",
         label: "My quotes",
-        href: "/traveler/dashboard#quotes",
+        href: "/traveler/quotes",
         icon: ReceiptText,
         badge: travelerSnapshot.pendingQuotes,
       },
       {
         key: "messages",
         label: "Messages",
-        href: "/traveler/dashboard#messages",
+        href: "/traveler/messages",
         icon: MessagesSquare,
         badge: travelerSnapshot.unreadMessages,
       },
       {
         key: "orders",
         label: "Active orders",
-        href: "/traveler/dashboard#orders",
+        href: "/traveler/orders",
         icon: PackageCheck,
         badge: travelerSnapshot.activeOrders,
       },
@@ -116,19 +115,19 @@ const NAV_GROUPS: readonly {
       {
         key: "proof",
         label: "Purchase proof",
-        href: "/traveler/dashboard#proof",
+        href: "/traveler/proof",
         icon: Camera,
       },
       {
         key: "handover",
         label: "Arrival & handover",
-        href: "/traveler/dashboard#handover",
+        href: "/traveler/handover",
         icon: QrCode,
       },
       {
-        key: "earnings",
-        label: "Earnings",
-        href: "/traveler/dashboard#earnings",
+        key: "payments",
+        label: "Payments",
+        href: "/traveler/payments",
         icon: Wallet,
       },
     ],
@@ -139,7 +138,7 @@ const NAV_GROUPS: readonly {
       {
         key: "profile",
         label: "Profile & passport KYC",
-        href: "/traveler/dashboard#profile",
+        href: "/traveler/profile",
         icon: UserRound,
       },
     ],
@@ -160,7 +159,7 @@ function NavItem({
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors duration-200",
+        "group flex items-center gap-3 rounded-lg border px-3 py-2.5 text-xl transition-colors duration-200",
         active
           ? "border-champagne/40 bg-champagne text-burgundy-deep"
           : "border-transparent text-ivory/65 hover:bg-white/5 hover:text-ivory",
@@ -198,7 +197,7 @@ function TravelerNav({ active }: { active?: TravelerNavKey }) {
     <nav aria-label="Traveler" className="grid gap-6">
       {NAV_GROUPS.map((group) => (
         <div key={group.label}>
-          <p className="px-3 pb-2 text-[0.5625rem] font-semibold uppercase tracking-[0.24em] text-ivory/60">
+          <p className="px-3 pb-2 text-base font-semibold uppercase tracking-[0.24em] text-ivory/60">
             {group.label}
           </p>
           <div className="grid gap-1">
@@ -277,19 +276,6 @@ export function TravelerShell({
 
           <div className="relative px-3">
             <TravelerNav active={active} />
-          </div>
-
-          <div className="mx-4 mt-8 rounded-xl border border-champagne/20 bg-[linear-gradient(145deg,rgba(214,185,140,0.18),rgba(214,185,140,0.03))] p-4">
-            <Sparkles
-              className="size-4 text-champagne"
-              strokeWidth={1.75}
-              aria-hidden="true"
-            />
-            <p className="mt-2 text-xs font-medium text-ivory">Trip desk</p>
-            <p className="mt-1 text-[0.6875rem] leading-relaxed text-ivory/60">
-              A demo assistant would line up requests with your route, dates
-              and luggage space.
-            </p>
           </div>
 
           <div className="mt-auto border-t border-white/10 p-4">
