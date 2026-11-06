@@ -71,6 +71,26 @@ export function mockSignIn(
     return { ok: false, error: "invalid-input" };
   }
 
+  // For Traveler workspace in demo mode, accept any valid email and password
+  if (workspace === "traveler") {
+    // Create a temporary session for any valid credentials
+    const sessionUser: SessionUser = {
+      id: `traveler_${Date.now().toString(36)}`,
+      name: input.email.split("@")[0], // Use email prefix as name
+      email: input.email.trim().toLowerCase(),
+      workspace: "traveler",
+    };
+
+    return {
+      ok: true,
+      session: {
+        user: sessionUser,
+        issuedAt: Date.now(),
+      },
+    };
+  }
+
+  // For Buyer and Admin workspaces, use strict credential checking
   const account = accounts.get(accountKey(workspace, input.email));
   if (!account || account.password !== input.password) {
     return { ok: false, error: "invalid-credentials" };

@@ -1,59 +1,34 @@
 "use client";
 
-import { useState } from "react";
-import { redirect } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { useActionState, useState } from "react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { loginBuyerAction } from "@/app/buyer/actions";
 import { Button, Input } from "@/components/ui";
-import { signInBuyer } from "@/lib/auth/buyer";
-import { WORKSPACES } from "@/lib/workspaces";
 
-interface BuyerLoginFormProps {
-  onAuthenticated?: () => void;
-}
+const initialState = { status: "idle" as const };
 
-export function BuyerLoginForm({ onAuthenticated }: BuyerLoginFormProps = {}) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function BuyerLoginForm() {
+  const [state, formAction, pending] = useActionState(
+    loginBuyerAction,
+    initialState,
+  );
+  const [showPassword, setShowPassword] = useState(false);
 
-  async function handleSubmit(formData: FormData) {
-    setError(null);
-    setPending(true);
-
-    const email = formData.get("email") as string;
-    const password = formData.get("password") as string;
-
-    try {
-      const result = await signInBuyer({ email, password });
-      if (result.ok) {
-        if (onAuthenticated) {
-          onAuthenticated();
-        } else {
-          redirect(WORKSPACES.buyer.dashboardPath);
-        }
-      } else {
-        setError(
-          result.error === "not-authorized"
-            ? "This account is not authorised for the Buyer workspace. It may still be pending admin provisioning."
-            : "Email or password is incorrect."
-        );
-      }
-    } catch {
-      setError("Something went wrong. Please try again.");
-    } finally {
-      setPending(false);
-    }
-  }
+  const showError = state.status === "error";
 
   return (
-    <form action={handleSubmit} className="grid gap-5">
-      {error && (
+    <form action={formAction} className="grid gap-5">
+      {showError && state.message && (
         <div className="rounded-lg border border-red-600/20 bg-red-600/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
-          {error}
+          {state.message}
         </div>
       )}
 
       <div>
-        <label htmlFor="email" className="block text-sm font-medium text-foreground">
+        <label
+          htmlFor="email"
+          className="block text-sm font-medium text-foreground"
+        >
           Email address
         </label>
         <Input
@@ -65,37 +40,68 @@ export function BuyerLoginForm({ onAuthenticated }: BuyerLoginFormProps = {}) {
           disabled={pending}
           placeholder="your@email.com"
           className="mt-1.5"
-          aria-invalid={error ? "true" : undefined}
+          aria-invalid={showError && state.fieldErrors?.email ? "true" : undefined}
         />
+        {showError && state.fieldErrors?.email && (
+          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+            {state.fieldErrors.email}
+          </p>
+        )}
       </div>
 
       <div>
-        <label htmlFor="password" className="block text-sm font-medium text-foreground">
+        <label
+          htmlFor="password"
+          className="block text-sm font-medium text-foreground"
+        >
           Password
         </label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          disabled={pending}
-          placeholder="••••••••"
-          className="mt-1.5"
-          aria-invalid={error ? "true" : undefined}
-        />
+        <div className="relative mt-1.5">
+          <Input
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
+            required
+            disabled={pending}
+            placeholder="••••••••"
+            className="pr-10"
+            aria-invalid={showError && state.fieldErrors?.password ? "true" : undefined}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            disabled={pending}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? (
+              <EyeOff className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Eye className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+        {showError && state.fieldErrors?.password && (
+          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+            {state.fieldErrors.password}
+          </p>
+        )}
       </div>
 
       <Button type="submit" disabled={pending} className="w-full">
         {pending && (
-          <Loader2 className="size-4 animate-spin" strokeWidth={2} aria-hidden="true" />
+          <Loader2
+            className="size-4 animate-spin"
+            strokeWidth={2}
+            aria-hidden="true"
+          />
         )}
         {pending ? "Signing in…" : "Sign in to Buyer workspace"}
       </Button>
 
       <p className="text-center text-xs text-muted">
-        Sign in creates a real Supabase session. Your Buyer role is confirmed
-        by the backend before access is granted.
+        Demo authentication · Use buyer@portal.demo / portal-demo or create a new account
       </p>
     </form>
   );

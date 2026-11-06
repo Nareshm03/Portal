@@ -1,52 +1,62 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 /**
- * Next.js 16 middleware convention (renamed from `middleware` to `proxy`).
- *
- * Route protection is intentionally NOT enforced yet. The middleware's only
- * job here is to refresh Supabase sessions: on every request it creates a
- * server Supabase client bound to the request/response cookies and calls
- * `auth.getClaims()`. If a valid refresh token is present, Supabase rotates
- * the access token and writes the new cookies back through `setAll`, which
- * we forward onto the response.
- *
- * This proxy is NOT the authorization layer. Each backend route validates
- * the bearer JWT itself via Express `requireAuth`/`requireRole`.
+ * Next.js 16 renamed the `middleware` file convention to `proxy`.
+ * 
+ * This proxy enforces authentication for Buyer and Traveler workspaces.
+ * Each workspace has its own session cookie, path-scoped to prevent cross-workspace access.
  */
-export async function proxy(request: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-  if (!supabaseUrl || !supabaseKey) {
+// Cookie names for workspace sessions (must match src/lib/workspaces.ts)
+const BUYER_SESSION_COOKIE = 'portal_buyer_session';
+const TRAVELER_SESSION_COOKIE = 'portal_traveler_session';
+
+export function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Buyer workspace routes
+  if (pathname.startsWith('/buyer')) {
+    // Allow access to login and register pages
+    if (pathname === '/buyer/login' || pathname === '/buyer/register') {
+      return NextResponse.next();
+    }
+
+    // Check for buyer session
+    const buyerSession = request.cookies.get(BUYER_SESSION_COOKIE);
+    
+    if (!buyerSession) {
+      // Redirect to login if no session
+      const loginUrl = new URL('/buyer/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // Session exists, allow access
     return NextResponse.next();
   }
 
-  const response = NextResponse.next({
-    request: {
-      headers: request.headers,
-    },
-  });
+  // Traveler workspace routes
+  if (pathname.startsWith('/traveler')) {
+    // Allow access to login and register pages
+    if (pathname === '/traveler/login' || pathname === '/traveler/register') {
+      return NextResponse.next();
+    }
 
-  const supabase = createServerClient(supabaseUrl, supabaseKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-        cookiesToSet.forEach(({ name, value, options }) => {
-          response.cookies.set(name, value, options);
-        });
-      },
-    },
-  });
+    // Check for traveler session
+    const travelerSession = request.cookies.get(TRAVELER_SESSION_COOKIE);
+    
+    if (!travelerSession) {
+      // Redirect to login if no session
+      const loginUrl = new URL('/traveler/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
 
-  // Refresh the session if a refresh token is present. getClaims() also
-  // verifies the JWT signature server-side; we intentionally do not use the
-  // result here to gate routes — the Express backend remains authoritative.
-  await supabase.auth.getClaims();
+    // Session exists, allow access
+    return NextResponse.next();
+  }
 
-  return response;
+  // All other routes (including admin) pass through
+  return NextResponse.next();
 }
 
 export const config = {

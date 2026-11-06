@@ -1,135 +1,174 @@
 "use client";
 
-import { useState } from "react";
-import { redirect } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { useActionState, useState } from "react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { registerBuyerAction } from "@/app/buyer/actions";
 import { Button, Input } from "@/components/ui";
-import { signUpBuyer } from "@/lib/auth/buyer";
-import { WORKSPACES } from "@/lib/workspaces";
 
-interface BuyerRegisterFormProps {
-  onAuthenticated?: () => void;
-}
+const initialState = { status: "idle" as const };
 
-export function BuyerRegisterForm({ onAuthenticated }: BuyerRegisterFormProps = {}) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [emailConfirmationRequired, setEmailConfirmationRequired] = useState(false);
+export function BuyerRegisterForm() {
+  const [state, formAction, pending] = useActionState(
+    registerBuyerAction,
+    initialState,
+  );
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  async function handleSubmit(formData: FormData) {
-    setError(null);
-    setPending(true);
-
-    const name = formData.get("name") as string;
-    const email = formData.get("email") as string;
-    const password = formData.get("password") as string;
-
-    try {
-      const result = await signUpBuyer({ name, email, password });
-      if (result.ok) {
-        if (result.requiresEmailConfirmation) {
-          setEmailConfirmationRequired(true);
-        } else if (onAuthenticated) {
-          onAuthenticated();
-        } else {
-          redirect(WORKSPACES.buyer.dashboardPath);
-        }
-      } else {
-        setError(
-          result.error === "email-taken"
-            ? "An account already exists for this email."
-            : "Account could not be created. Please try again."
-        );
-      }
-    } catch {
-      setError("Something went wrong. Please try again.");
-    } finally {
-      setPending(false);
-    }
-  }
+  const showError = state.status === "error";
 
   return (
-    <div className="grid gap-5">
-      {emailConfirmationRequired ? (
-        <div className="rounded-lg border border-champagne-strong/20 bg-champagne/10 p-4">
-          <p className="text-sm font-medium text-foreground">
-            Account created — confirm your email
-          </p>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            A confirmation email has been sent. Please confirm your email
-            address before signing in.
-          </p>
+    <form action={formAction} className="grid gap-5">
+      {showError && state.message && (
+        <div className="rounded-lg border border-red-600/20 bg-red-600/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          {state.message}
         </div>
-      ) : (
-        <form action={handleSubmit} className="grid gap-5">
-          {error && (
-            <div className="rounded-lg border border-red-600/20 bg-red-600/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
-              {error}
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-foreground">
-              Full name
-            </label>
-            <Input
-              id="name"
-              name="name"
-              type="text"
-              autoComplete="name"
-              required
-              disabled={pending}
-              placeholder="Meera Kapoor"
-              className="mt-1.5"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-foreground">
-              Email address
-            </label>
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              disabled={pending}
-              placeholder="your@email.com"
-              className="mt-1.5"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-foreground">
-              Password
-            </label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="new-password"
-              required
-              disabled={pending}
-              placeholder="••••••••"
-              className="mt-1.5"
-            />
-            <p className="mt-1 text-xs text-muted">Minimum 8 characters</p>
-          </div>
-
-          <Button type="submit" disabled={pending} className="w-full">
-            {pending && (
-              <Loader2 className="size-4 animate-spin" strokeWidth={2} aria-hidden="true" />
-            )}
-            {pending ? "Creating account…" : "Create Buyer account"}
-          </Button>
-
-          <p className="text-center text-xs text-muted">
-            Your profile is created as a Buyer with pending status. An admin
-            must provision your account before Buyer features are available.
-          </p>
-        </form>
       )}
-    </div>
+
+      <div>
+        <label
+          htmlFor="fullName"
+          className="block text-sm font-medium text-foreground"
+        >
+          Full name
+        </label>
+        <Input
+          id="fullName"
+          name="fullName"
+          type="text"
+          autoComplete="name"
+          required
+          disabled={pending}
+          placeholder="Your full name"
+          className="mt-1.5"
+          aria-invalid={showError && state.fieldErrors?.fullName ? "true" : undefined}
+        />
+        {showError && state.fieldErrors?.fullName && (
+          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+            {state.fieldErrors.fullName}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label
+          htmlFor="email"
+          className="block text-sm font-medium text-foreground"
+        >
+          Email address
+        </label>
+        <Input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          disabled={pending}
+          placeholder="your@email.com"
+          className="mt-1.5"
+          aria-invalid={showError && state.fieldErrors?.email ? "true" : undefined}
+        />
+        {showError && state.fieldErrors?.email && (
+          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+            {state.fieldErrors.email}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label
+          htmlFor="password"
+          className="block text-sm font-medium text-foreground"
+        >
+          Password
+        </label>
+        <div className="relative mt-1.5">
+          <Input
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            disabled={pending}
+            placeholder="At least 8 characters"
+            className="pr-10"
+            aria-invalid={showError && state.fieldErrors?.password ? "true" : undefined}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            disabled={pending}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? (
+              <EyeOff className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Eye className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+        {showError && state.fieldErrors?.password && (
+          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+            {state.fieldErrors.password}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label
+          htmlFor="confirmPassword"
+          className="block text-sm font-medium text-foreground"
+        >
+          Confirm password
+        </label>
+        <div className="relative mt-1.5">
+          <Input
+            id="confirmPassword"
+            name="confirmPassword"
+            type={showConfirmPassword ? "text" : "password"}
+            autoComplete="new-password"
+            required
+            disabled={pending}
+            placeholder="Re-enter your password"
+            className="pr-10"
+            aria-invalid={showError && state.fieldErrors?.confirmPassword ? "true" : undefined}
+          />
+          <button
+            type="button"
+            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+            disabled={pending}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+          >
+            {showConfirmPassword ? (
+              <EyeOff className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Eye className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+        {showError && state.fieldErrors?.confirmPassword && (
+          <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+            {state.fieldErrors.confirmPassword}
+          </p>
+        )}
+      </div>
+
+      <Button type="submit" disabled={pending} className="w-full">
+        {pending && (
+          <Loader2
+            className="size-4 animate-spin"
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+        )}
+        {pending ? "Creating account…" : "Create Buyer account"}
+      </Button>
+
+      <p className="text-center text-xs text-muted">
+        Demo authentication · Your account will be stored in memory until the server restarts
+      </p>
+    </form>
   );
 }

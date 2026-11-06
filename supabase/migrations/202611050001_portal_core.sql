@@ -9,7 +9,6 @@ create type public.kyc_status as enum ('NOT_SUBMITTED', 'SUBMITTED', 'PENDING_RE
 create type public.compliance_status as enum ('REVIEW_REQUIRED', 'APPROVED', 'REJECTED');
 create type public.order_state as enum ('ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED');
 create type public.payment_status as enum ('CREATING', 'CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED');
-create type public.request_status as enum ('PENDING_REVIEW', 'OPEN', 'MATCHED', 'CLOSED', 'REJECTED');
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -82,7 +81,6 @@ create table public.requests (
   fulfilment_mode text not null default 'PASSENGER_BAGGAGE' check (fulfilment_mode in ('PASSENGER_BAGGAGE', 'FORMAL_IMPORT', 'LICENSED_COURIER', 'OTHER')),
   is_for_third_party boolean not null default true,
   compliance_status public.compliance_status not null default 'REVIEW_REQUIRED',
-  request_status public.request_status not null default 'PENDING_REVIEW' check (request_status in ('PENDING_REVIEW', 'OPEN', 'MATCHED', 'CLOSED', 'REJECTED')),
   compliance_reason text[] not null default array['Manual compliance review required before matching.']::text[],
   compliance_reviewed_by uuid references public.profiles(id),
   compliance_reviewed_at timestamptz,
@@ -98,7 +96,7 @@ create table public.requests (
 );
 
 create index requests_buyer_idx on public.requests (buyer_id, created_at desc);
-create index requests_matching_idx on public.requests (origin_airport_code, destination_airport_code, needed_by) where request_status = 'OPEN' and compliance_status = 'APPROVED';
+create index requests_matching_idx on public.requests (origin_airport_code, destination_airport_code, needed_by) where status = 'OPEN' and compliance_status = 'APPROVED';
 
 create table public.quotes (
   id uuid primary key default gen_random_uuid(),
@@ -112,9 +110,9 @@ create table public.quotes (
   fx_timestamp timestamptz not null,
   indicative_duty_paise bigint,
   duty_source text,
+  duty_reviewed_by uuid references public.profiles(id),
+  duty_reviewed_at timestamptz,
   duty_assessment_reference text,
-  duty_assessment_status text not null default 'PENDING_REVIEW' check (duty_assessment_status in ('PENDING_REVIEW', 'APPROVED', 'REJECTED')),
-  duty_rejection_reason text,
   note text,
   platform_fee_bps integer not null default 500,
   status text not null default 'ACTIVE' check (status in ('ACTIVE', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'WITHDRAWN')),
@@ -268,8 +266,7 @@ create table public.audit_logs (
 
 -- updated_at helper
 create or replace function public.set_updated_at()
-returns trigger language plpgsql as $$ begin new.updated_at = now(); return new; end;
-$$ LANGUAGE plpgsql;
+returns trigger language plpgsql as $$ begin new.updated_at = now(); return new; end; $$;
 create trigger profiles_updated_at before update on public.profiles for each row execute function public.set_updated_at();
 create trigger trips_updated_at before update on public.trips for each row execute function public.set_updated_at();
 create trigger requests_updated_at before update on public.requests for each row execute function public.set_updated_at();
@@ -278,8 +275,7 @@ create trigger payment_intents_updated_at before update on public.payment_intent
 
 -- Immutable evidence and money tables: correction means a new compensating row, never an UPDATE/DELETE.
 create or replace function public.reject_mutation()
-returns trigger language plpgsql as $$ begin raise exception 'append-only table: updates and deletes are prohibited'; end;
-$$ LANGUAGE plpgsql;
+returns trigger language plpgsql as $$ begin raise exception 'append-only table: updates and deletes are prohibited'; end; $$;
 create trigger ledger_transactions_immutable before update or delete on public.ledger_transactions for each row execute function public.reject_mutation();
 create trigger ledger_entries_immutable before update or delete on public.ledger_entries for each row execute function public.reject_mutation();
 create trigger order_events_immutable before update or delete on public.order_events for each row execute function public.reject_mutation();
@@ -312,7 +308,8 @@ declare
 begin
   if coalesce(auth.role(), '') <> 'service_role' then raise exception 'service role required' using errcode = '42501'; end if;
   if not exists (select 1 from public.profiles a where a.id = p_actor_id and a.role = 'admin' and a.account_status = 'ACTIVE') then
-    raise exception 'active admin required' using errcode = '42501'; end if;
+    raise exception 'active admin required' using errcode = '42501';
+  end if;
   if p_new_role not in ('buyer'::public.portal_role, 'traveller'::public.portal_role) then raise exception 'only buyer or traveller roles may be assigned here'; end if;
   select * into v_profile from public.profiles where id = p_profile_id for update;
   if not found then raise exception 'profile not found'; end if;
@@ -323,7 +320,8 @@ begin
     kyc_status = 'NOT_SUBMITTED', updated_at = now()
     where id = p_profile_id returning * into v_profile;
   insert into public.audit_logs(actor_id, action, target_type, target_id, metadata)
-  values (p_actor_id, 'PROFILE_ROLE_PROVISIONED', 'profile', p_profile_id, jsonb_build_object('newRole', p_new_role, 'accountStatus', v_profile.account_status));
+  values (p_actor_id, 'PROFILE_ROLE_PROVISIONED', 'profile', p_profile_id,
+    jsonb_build_object('newRole', p_new_role, 'accountStatus', v_profile.account_status));
   return v_profile;
 end;
 $$;
@@ -344,9 +342,10 @@ declare
 begin
   if coalesce(auth.role(), '') <> 'service_role' then raise exception 'service role required' using errcode = '42501'; end if;
   if not exists (select 1 from public.profiles a where a.id = p_actor_id and a.role = 'admin' and a.account_status = 'ACTIVE') then
-    raise exception 'active admin required' using errcode = '42501'; end if;
+    raise exception 'active admin required' using errcode = '42501';
+  end if;
   if p_decision not in ('VERIFIED'::public.kyc_status, 'REJECTED'::public.kyc_status) then raise exception 'invalid KYC decision'; end if;
-  if p_provider_reference is null or length(trim(p_provider_reference)) < 6 or length(trim(p_provider_reference)) > 160 then raise exception 'valid KYC provider reference required'; end if;
+  if p_provider_reference is null or length(trim(p_provider_reference)) < 6 or length(p_provider_reference) > 160 then raise exception 'valid KYC provider reference required'; end if;
   select * into v_profile from public.profiles where id = p_profile_id for update;
   if not found or v_profile.role <> 'traveller' then raise exception 'traveller profile not found'; end if;
   if v_profile.kyc_status not in ('SUBMITTED', 'PENDING_REVIEW') then raise exception 'traveller KYC is not awaiting review'; end if;
@@ -355,7 +354,8 @@ begin
     updated_at = now()
     where id = p_profile_id returning * into v_profile;
   insert into public.audit_logs(actor_id, action, target_type, target_id, metadata)
-  values (p_actor_id, 'TRAVELLER_KYC_REVIEWED', 'profile', p_profile_id, jsonb_build_object('decision', p_decision, 'providerReference', p_provider_reference));
+  values (p_actor_id, 'TRAVELLER_KYC_REVIEWED', 'profile', p_profile_id,
+    jsonb_build_object('decision', p_decision, 'providerReference', p_provider_reference));
   return v_profile;
 end;
 $$;
@@ -377,10 +377,12 @@ declare
   v_role text := coalesce(auth.role(), '');
 begin
   if v_role <> 'service_role' and auth.uid() is distinct from p_actor_id then
-    raise exception 'actor mismatch' using errcode = '42501'; end if;
+    raise exception 'actor mismatch' using errcode = '42501';
+  end if;
   select * into v_order from public.orders where id = p_order_id for update;
   if not found then raise exception 'order not found' using errcode = 'P0002'; end if;
   v_from := v_order.state;
+  -- Safe idempotency for concurrent webhook/client retries; no duplicate event is written.
   if v_from = p_to_state then return v_order; end if;
 
   if not (
@@ -389,7 +391,8 @@ begin
     (v_from = 'PURCHASED' and p_to_state in ('LANDED', 'DISPUTED')) or
     (v_from = 'LANDED' and p_to_state in ('COMPLETED', 'DISPUTED', 'FORFEITED'))
   ) then
-    raise exception 'invalid transition: % -> %', v_from, p_to_state using errcode = '23514'; end if;
+    raise exception 'invalid transition: % -> %', v_from, p_to_state using errcode = '23514';
+  end if;
 
   if p_to_state = 'LOCKED' then
     if v_role <> 'service_role' and p_actor_id <> v_order.buyer_id then raise exception 'only buyer can lock order' using errcode = '42501'; end if;
@@ -398,7 +401,8 @@ begin
       where pi.order_id = p_order_id and pi.status = 'CAPTURED'
         and pi.amount_paise = v_order.deposit_paise and pi.currency = 'INR'
     ) then
-      raise exception 'matching captured deposit required before lock' using errcode = '23514'; end if;
+      raise exception 'matching captured deposit required before lock' using errcode = '23514';
+    end if;
   elsif p_to_state in ('PURCHASED', 'LANDED') then
     if p_actor_id <> v_order.traveller_id and v_role <> 'service_role' then raise exception 'only traveller can perform this transition' using errcode = '42501'; end if;
   elsif p_to_state = 'COMPLETED' then
@@ -406,28 +410,21 @@ begin
   elsif p_to_state = 'DISPUTED' then
     if p_actor_id not in (v_order.buyer_id, v_order.traveller_id) and v_role <> 'service_role' then raise exception 'only order participants can dispute' using errcode = '42501'; end if;
   elsif p_to_state in ('FORFEITED', 'EXPIRED') and v_role <> 'service_role' then
-    raise exception 'system role required' using errcode = '42501'; end if;
-
-  if p_to_state = 'EXPIRED' then
-    if v_order.payment_deadline > now() then raise exception 'payment window has not elapsed'; end if;
-    if exists (select 1 from public.payment_intents pi where pi.order_id = p_order_id and pi.status = 'CAPTURED') then
-      raise exception 'captured payment must be reconciled before expiry'; end if;
-    if exists (select 1 from public.payment_intents pi where pi.order_id = p_order_id and pi.provider <> 'MOCK' and pi.status in ('CREATING', 'CREATED', 'AUTHORIZED')) then
-      raise exception 'provider payment must be reconciled before expiry'; end if;
-  elsif p_to_state = 'FORFEITED' then
-    if v_from <> 'LANDED' or v_order.forfeit_at is null or v_order.forfeit_at > now() then
-      raise exception 'handover forfeiture deadline has not elapsed'; end if;
+    raise exception 'system role required' using errcode = '42501';
   end if;
 
   if p_to_state = 'EXPIRED' then
     if v_order.payment_deadline > now() then raise exception 'payment window has not elapsed'; end if;
     if exists (select 1 from public.payment_intents pi where pi.order_id = p_order_id and pi.status = 'CAPTURED') then
-      raise exception 'captured payment must be reconciled before expiry'; end if;
+      raise exception 'captured payment must be reconciled before expiry';
+    end if;
     if exists (select 1 from public.payment_intents pi where pi.order_id = p_order_id and pi.provider <> 'MOCK' and pi.status in ('CREATING', 'CREATED', 'AUTHORIZED')) then
-      raise exception 'provider payment must be reconciled before expiry'; end if;
+      raise exception 'provider payment must be reconciled before expiry';
+    end if;
   elsif p_to_state = 'FORFEITED' then
     if v_from <> 'LANDED' or v_order.forfeit_at is null or v_order.forfeit_at > now() then
-      raise exception 'handover forfeiture deadline has not elapsed'; end if;
+      raise exception 'handover forfeiture deadline has not elapsed';
+    end if;
   end if;
 
   update public.orders set state = p_to_state, version = version + 1,
@@ -510,6 +507,16 @@ create policy requests_select_own on public.requests for select to authenticated
 create policy quotes_select_participants on public.quotes for select to authenticated using (
   traveller_id = auth.uid() or exists (select 1 from public.requests r where r.id = request_id and r.buyer_id = auth.uid())
 );
+create policy orders_select_participants on public.orders for select to authenticated using (buyer_id = auth.uid() or traveller_id = auth.uid());
+create policy order_events_select_participants on public.order_events for select to authenticated using (
+  exists (select 1 from public.orders o where o.id = order_id and (o.buyer_id = auth.uid() or o.traveller_id = auth.uid()))
+);
+
+-- Payment, ledger, OTP, webhooks and audit data are server-only.
+-- No authenticated/anon write policies are intentionally created.
+comment on table public.ledger_transactions is 'Append-only money journal. Never treat as a regulated escrow account.';
+comment on table public.requests is 'Matching is prohibited unless compliance_status=APPROVED and status=OPEN.';
+comment on table public.profiles is 'User role, account status and KYC status are server-managed.';
 
 -- Quote acceptance is atomic: one buyer can accept one active quote, only after compliance approval.
 create or replace function public.accept_quote(
@@ -565,44 +572,3 @@ end;
 $$;
 revoke all on function public.accept_quote(uuid, uuid, bigint, bigint, bigint, bigint, timestamptz) from public, anon, authenticated;
 grant execute on function public.accept_quote(uuid, uuid, bigint, bigint, bigint, bigint, timestamptz) to service_role;
-
--- ** Conversation messaging schema **
-
-create table public.conversations (
-  id uuid primary key default gen_random_uuid(),
-  quote_id uuid not null,
-  buyer_id uuid not null references public.profiles(id),
-  traveller_id uuid not null references public.profiles(id),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table public.conversation_messages (
-  id uuid primary key default gen_random_uuid(),
-  conversation_id uuid not null references public.conversations(id) on delete cascade,
-  sender_id uuid not null references public.profiles(id),
-  body text not null,
-  seq bigint not null default 0,
-  created_at timestamptz not null default now()
-);
-
-create table public.conversation_read_states (
-  conversation_id uuid not null references public.conversations(id) on delete cascade,
-  user_id uuid not null references public.profiles(id),
-  last_read_seq bigint not null default 0,
-  updated_at timestamptz not null default now(),
-  unique (conversation_id, user_id)
-);
-
--- RLS for conversation tables
-alter table public.conversations enable row level security;
-alter table public.conversation_messages enable row level security;
-alter table public.conversation_read_states enable row level security;
-
-create policy conversations_select_own on public.conversations for select to authenticated using (buyer_id = auth.uid() or traveller_id = auth.uid());
-create policy conversations_insert_own on public.conversations for insert to authenticated with check (buyer_id = auth.uid() or traveller_id = auth.uid());
-
-create policy conversation_messages_select_participants on public.converation_messages for select to authenticated using (exists (select 1 from public.conversations c where c.id = conversation_id and (c.buyer_id = auth.uid() or c.traveller_id = auth.uid())));
-create policy conversation_messages_insert_own on public.conversation_messages for insert to authenticated with check (sender_id = auth.uid());
-
-create policy conversation_read_states_upsert on public.conversation_read_states for upsert to authenticated with check (user_id = auth.uid());

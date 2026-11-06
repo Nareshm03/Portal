@@ -10,8 +10,8 @@ import {
   PackagePlus,
   Plane,
   ReceiptText,
-  Sparkles,
   UserRound,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { PortalMark } from "@/components/shared/portal-mark";
@@ -32,6 +32,7 @@ export type BuyerNavKey =
   | "quotes"
   | "messages"
   | "orders"
+  | "payments"
   | "account";
 
 interface BuyerNavItem {
@@ -69,35 +70,41 @@ const NAV_GROUPS: readonly {
       {
         key: "requests",
         label: "Active requests",
-        href: "/buyer/dashboard#requests",
+        href: "/buyer/requests",
         icon: ClipboardList,
         badge: buyerSnapshot.activeRequests,
       },
       {
         key: "travelers",
         label: "Matched travelers",
-        href: "/buyer/dashboard#travelers",
+        href: "/buyer/travelers",
         icon: Plane,
       },
       {
         key: "quotes",
         label: "Quotes",
-        href: "/buyer/dashboard#quotes",
+        href: "/buyer/quotes",
         icon: ReceiptText,
         badge: buyerSnapshot.quotesToReview,
       },
       {
         key: "messages",
         label: "Messages",
-        href: "/buyer/dashboard#messages",
+        href: "/buyer/messages",
         icon: MessagesSquare,
         badge: buyerSnapshot.unreadMessages,
       },
       {
         key: "orders",
         label: "Orders",
-        href: "/buyer/dashboard#orders",
+        href: "/buyer/orders",
         icon: PackageCheck,
+      },
+      {
+        key: "payments",
+        label: "Payments",
+        href: "/buyer/payments",
+        icon: Wallet,
       },
     ],
   },
@@ -107,7 +114,7 @@ const NAV_GROUPS: readonly {
       {
         key: "account",
         label: "Profile & settings",
-        href: "/buyer/dashboard#account",
+        href: "/buyer/profile",
         icon: UserRound,
       },
     ],
@@ -122,7 +129,7 @@ function NavItem({ item, active }: { item: BuyerNavItem; active: boolean }) {
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors duration-200",
+        "group flex items-center gap-3 rounded-lg border px-3 py-2.5 text-xl transition-colors duration-200",
         active
           ? "border-champagne/25 bg-champagne/15 text-champagne"
           : "border-transparent text-ivory/65 hover:bg-white/5 hover:text-ivory",
@@ -160,7 +167,7 @@ function BuyerNav({ active }: { active?: BuyerNavKey }) {
     <nav aria-label="Buyer" className="grid gap-6">
       {NAV_GROUPS.map((group) => (
         <div key={group.label}>
-          <p className="px-3 pb-2 text-[0.5625rem] font-semibold uppercase tracking-[0.24em] text-ivory/60">
+          <p className="px-3 pb-2 text-base font-semibold uppercase tracking-[0.24em] text-ivory/60">
             {group.label}
           </p>
           <div className="grid gap-1">
@@ -232,20 +239,6 @@ export function BuyerShell({
 
           <div className="relative px-3">
             <BuyerNav active={active} />
-          </div>
-
-          <div className="mx-4 mt-8 rounded-xl border border-champagne/20 bg-[linear-gradient(145deg,rgba(214,185,140,0.18),rgba(214,185,140,0.03))] p-4">
-            <Sparkles
-              className="size-4 text-champagne"
-              strokeWidth={1.75}
-              aria-hidden="true"
-            />
-            <p className="mt-2 text-xs font-medium text-ivory">
-              Sourcing concierge
-            </p>
-            <p className="mt-1 text-[0.6875rem] leading-relaxed text-ivory/60">
-              A demo assistant would compare quotes and check customs here.
-            </p>
           </div>
 
           <div className="mt-auto border-t border-white/10 p-4">
