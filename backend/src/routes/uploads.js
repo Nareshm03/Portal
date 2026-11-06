@@ -12,11 +12,35 @@ import {
   KYC_MAX_FILE_BYTES,
   KYC_SIGNED_URL_TTL_SECONDS,
   SIGNED_URL_TTL_SECONDS,
-  validateKycUploadRequest
+  validateKycUploadRequest,
+  validateUploadRequest,
+  canAccessOrder,
+  buildStoragePath,
+  storageFolder,
+  storageBasename,
+  isCompletedObject,
 } from '../services/uploads.js';
 
 export const uploadRouter = Router();
 const supabase = () => getSupabase();
+
+/** Get an order by ID, checking participant ownership. */
+async function getOrderOr404(orderId, req) {
+  const { data, error } = await supabase().from('orders')
+    .select('*').eq('id', orderId).single();
+  if (error || !data) throw new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found.');
+  if (data.buyer_id !== req.user.id && data.traveller_id !== req.user.id && req.profile?.role !== 'admin') {
+    throw new HttpError(403, 'FORBIDDEN', 'You do not have access to this order.');
+  }
+  return data;
+}
+
+/** Authorize access to an order's evidence documents. */
+function authorizeOrder(order, req) {
+  if (order.buyer_id !== req.user.id && order.traveller_id !== req.user.id && req.profile?.role !== 'admin') {
+    throw new HttpError(403, 'FORBIDDEN', 'You do not have access to evidence for this order.');
+  }
+}
 
 /** Get a KYC submission by ID, checking ownership. */
 async function getKycSubmissionOr404(submissionId, req) {
@@ -182,7 +206,7 @@ uploadRouter.get('/kyc-submissions/:submissionId/uploads/:uploadId/download-url'
 // evidence record is created so the subsequent /complete call can verify and persist.
 uploadRouter.post('/orders/:id/uploads/sign', requireAuth, requireRole('buyer', 'traveller', 'admin'), async (req, res) => {
   const orderId = z.string().uuid().parse(req.params.id);
-  const order = await getOrderOr404(orderId);
+  const order = await getOrderOr404(orderId, req);
   authorizeOrder(order, req);
 
   const validated = validateUploadRequest(req.body ?? {});
@@ -225,7 +249,7 @@ uploadRouter.post('/orders/:id/uploads/sign', requireAuth, requireRole('buyer', 
 // Step 2: verify the object actually landed in Storage, then mark the record COMPLETED.
 uploadRouter.post('/orders/:id/uploads/complete', requireAuth, requireRole('buyer', 'traveller', 'admin'), async (req, res) => {
   const orderId = z.string().uuid().parse(req.params.id);
-  const order = await getOrderOr404(orderId);
+  const order = await getOrderOr404(orderId, req);
   authorizeOrder(order, req);
 
   const { uploadId } = z.object({ uploadId: z.string().uuid() }).parse(req.body ?? {});
@@ -258,7 +282,7 @@ uploadRouter.post('/orders/:id/uploads/complete', requireAuth, requireRole('buye
 // List completed evidence for an order (metadata only — never a public URL).
 uploadRouter.get('/orders/:id/uploads', requireAuth, requireRole('buyer', 'traveller', 'admin'), async (req, res) => {
   const orderId = z.string().uuid().parse(req.params.id);
-  const order = await getOrderOr404(orderId);
+  const order = await getOrderOr404(orderId, req);
   authorizeOrder(order, req);
 
   const { data, error } = await supabase().from('order_evidence')
@@ -277,7 +301,7 @@ uploadRouter.get('/orders/:id/uploads/:uploadId/download-url', requireAuth, requ
   if (error || !evidence) throw new HttpError(404, 'UPLOAD_NOT_FOUND', 'Upload not found.');
   if (evidence.status !== 'COMPLETED') throw new HttpError(409, 'UPLOAD_NOT_COMPLETED', 'Only completed uploads can be downloaded.');
 
-  const order = await getOrderOr404(evidence.order_id);
+  const order = await getOrderOr404(evidence.order_id, req);
   authorizeOrder(order, req);
 
   const { data: signed, error: signError } = await supabase().storage.from(EVIDENCE_BUCKET)

@@ -23,49 +23,67 @@ import {
   formatDate,
   nextTravelerTrip,
   travelerHeroImage,
-  travelerProfile,
   travelerSnapshot,
 } from "@/lib/demo/traveler";
+import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createProxiedApiClient } from "@/lib/api/client";
+import { requireTravellerSession, getTravellerProfile } from "@/lib/auth/traveler";
+import { EmptyState, LoadingState } from "@/components/ui";
+
+export const dynamic = "force-dynamic";
+
+interface BackendProfile {
+  id: string;
+  full_name: string | null;
+  role: string;
+  account_status: string;
+  kyc_status: string;
+  created_at: string | null;
+}
 
 export const metadata: Metadata = { title: "Traveler dashboard" };
 
-const STATS = [
-  {
-    label: "Upcoming trips",
-    value: travelerSnapshot.upcomingTrips,
-    note: "Next: London → Mumbai",
-    href: "/traveler/trips",
-  },
-  {
-    label: "Open requests",
-    value: travelerSnapshot.openRequests,
-    note: "Matching your routes",
-    href: "/traveler/requests",
-  },
-  {
-    label: "Pending quotes",
-    value: travelerSnapshot.pendingQuotes,
-    note: "Awaiting buyer decision",
-    href: "/traveler/quotes",
-  },
-  {
-    label: "Active orders",
-    value: travelerSnapshot.activeOrders,
-    note: "Two in your care",
-    href: "/traveler/orders",
-  },
-] as const;
+export default async function TravelerDashboardPage() {
+  const supabase = createServerClient();
+  // Ensure the traveler is authenticated and active on the backend.
+  await requireTravellerSession(supabase);
 
-export default function TravelerDashboardPage() {
+  let profile: BackendProfile | null = null;
+  let profileError: string | null = null;
+  let isLoading = true;
+
+  try {
+    const result = await getTravellerProfile(supabase);
+    if (result.ok && result.profile) {
+      profile = result.profile;
+    } else {
+      profileError = result.error ?? "Unable to load profile.";
+    }
+  } catch (err) {
+    profileError = err instanceof Error ? err.message : "Unable to load profile.";
+  } finally {
+    isLoading = false;
+  }
+
+  if (isLoading) {
+    return (
+      <TravelerShell active="overview">
+        <LoadingState />
+      </TravelerShell>
+    );
+  }
+
+  const firstName = profile?.full_name ? profile.full_name.split(" ")[0] : "Traveler";
+
   return (
     <TravelerShell active="overview">
       <header className="flex flex-wrap items-end justify-between gap-5">
         <div>
           <p className="eyebrow">
-            Traveler overview · {travelerProfile.baseCity}
+            Traveler overview · {profile?.full_name ? "Backend-connected" : "Demo mode"}
           </p>
           <h1 className="mt-2.5 max-w-2xl text-4xl leading-tight sm:text-5xl">
-            Good evening, {travelerProfile.firstName}.
+            Good evening, {firstName}.
           </h1>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
             Your next London–Mumbai flight is on the 12th. Two buyer requests
@@ -75,23 +93,35 @@ export default function TravelerDashboardPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <span className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[0.6875rem] text-muted sm:inline-flex">
-            <span
-              className="size-1.5 rounded-full bg-emerald"
-              aria-hidden="true"
-            />
-            Mock passport KYC verified
-          </span>
-          <ButtonLink
-            href="/traveler/trips/new"
-            leadingIcon={
-              <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-            }
-          >
-            Register a trip
-          </ButtonLink>
+          {profile && profile.account_status === "ACTIVE" && (
+            <>
+              <span className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[0.6875rem] text-muted sm:inline-flex">
+                <span className="size-1.5 rounded-full bg-emerald" aria-hidden="true" />
+                {profile.kyc_status === "VERIFIED" ? "KYC verified" : "KYC pending"}
+              </span>
+              <ButtonLink
+                href="/traveler/trips/new"
+                leadingIcon={
+                  <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                }
+              >
+                Register a trip
+              </ButtonLink>
+            </>
+          )}
+          {!profile || profile.account_status !== "ACTIVE" && (
+            <span className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[0.6875rem] text-muted sm:inline-flex">
+              Account not yet active — please complete onboarding.
+            </span>
+          )}
         </div>
       </header>
+
+      {profileError && (
+        <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {profileError}
+        </div>
+      )}
 
       {/* ── Quick action + overview ─────────────────────────────────────── */}
       <div className="mt-8 grid gap-5 xl:grid-cols-12">
@@ -122,8 +152,7 @@ export default function TravelerDashboardPage() {
                 {nextTravelerTrip.originCity} to{" "}
                 {airportLabel(nextTravelerTrip.destinationAirport)
                   .split("·")[1]
-                  ?.trim()}
-                .
+                  ?.trim()}.
               </h2>
               <p className="mt-4 max-w-md text-sm leading-relaxed text-ivory/70">
                 {nextTravelerTrip.airline} {nextTravelerTrip.flightNumber},{" "}
@@ -157,28 +186,16 @@ export default function TravelerDashboardPage() {
 
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-[0.625rem] uppercase tracking-[0.16em] text-ivory/60">
               <span className="inline-flex items-center gap-1.5">
-                <Plane
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
+                <Plane className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
                 {nextTravelerTrip.originCode} →{" "}
                 {nextTravelerTrip.destinationAirport}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <CalendarDays
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
+                <CalendarDays className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
                 {formatDate(nextTravelerTrip.departureDate)}
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <ShieldCheck
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
+                <ShieldCheck className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
                 Verified demo traveler
               </span>
             </div>
@@ -193,46 +210,74 @@ export default function TravelerDashboardPage() {
                 <h2 className="mt-2 text-2xl">Your trip desk</h2>
               </div>
               <span className="grid size-10 shrink-0 place-items-center rounded-full border border-champagne-strong/40 bg-champagne/15">
-                <Sparkles
-                  className="size-4 text-champagne-strong"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
+                <Sparkles className="size-4 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
               </span>
             </div>
 
             <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border">
-              {STATS.map((stat) => (
-                <div key={stat.label} className="bg-surface p-4">
-                  <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    {stat.label}
-                  </dt>
-                  <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
-                    {String(stat.value).padStart(2, "0")}
-                  </dd>
-                  <dd className="mt-2">
-                    <Link
-                      href={stat.href}
-                      className="inline-flex items-center gap-1 text-[0.625rem] text-muted transition-colors hover:text-burgundy"
-                    >
-                      {stat.note}
-                      <ArrowUpRight
-                        className="size-3"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                    </Link>
-                  </dd>
-                </div>
-              ))}
+              <div className="bg-surface p-4">
+                <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Upcoming trips
+                </dt>
+                <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
+                  {String(travelerSnapshot.upcomingTrips).padStart(2, "0")}
+                </dd>
+                <dd className="mt-2">
+                  <Link
+                    href="/traveler/trips"
+                    className="inline-flex items-center gap-1 text-[0.625rem] text-muted transition-colors hover:text-burgundy"
+                  >
+                    View all trips
+                    <ArrowUpRight className="size-3" strokeWidth={2} aria-hidden="true" />
+                  </Link>
+                </dd>
+              </div>
+              <div className="bg-surface p-4">
+                <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Open requests
+                </dt>
+                <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
+                  {String(travelerSnapshot.openRequests).padStart(2, "0")}
+                </dd>
+                <dd className="mt-2">
+                  <span className="text-[0.5625rem] text-muted">Matching your routes</span>
+                </dd>
+              </div>
+              <div className="bg-surface p-4">
+                <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Pending quotes
+                </dt>
+                <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
+                  {String(travelerSnapshot.pendingQuotes).padStart(2, "0")}
+                </dd>
+                <dd className="mt-2">
+                  <span className="text-[0.5625rem] text-muted">Awaiting buyer decision</span>
+                </dd>
+              </div>
+              <div className="bg-surface p-4">
+                <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Active orders
+                </dt>
+                <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
+                  {String(travelerSnapshot.activeOrders).padStart(2, "0")}
+                </dd>
+                <dd className="mt-2">
+                  <Link
+                    href="/traveler/orders"
+                    className="inline-flex items-center gap-1 text-[0.625rem] text-muted transition-colors hover:text-burgundy"
+                  >
+                    Two in your care
+                    <ArrowUpRight className="size-3" strokeWidth={2} aria-hidden="true" />
+                  </Link>
+                </dd>
+              </div>
             </dl>
 
             <p className="mt-5 rounded-lg border border-champagne-strong/25 bg-champagne/10 p-3 text-[0.6875rem] leading-relaxed text-muted">
               <span className="font-medium text-burgundy">
                 {travelerSnapshot.unreadMessages} messages
               </span>{" "}
-              are waiting for a reply. Active orders include receipt and arrival
-              evidence for demo handovers.
+              are waiting for a reply. Active orders include receipt and arrival evidence for demo handovers.
             </p>
           </div>
         </aside>
@@ -243,23 +288,7 @@ export default function TravelerDashboardPage() {
         <SectionHeading
           eyebrow="Matching your routes"
           title="Available buyer requests"
-          description="Three sample buyer requests that fit your upcoming trips."
-          actions={
-            <ButtonLink
-              href="/traveler/requests"
-              variant="outline"
-              size="sm"
-              trailingIcon={
-                <ArrowRight
-                  className="size-4"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
-              }
-            >
-              View all requests
-            </ButtonLink>
-          }
+          description="Demo buyer requests for illustration only. No live buyer contact or matching."
         />
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -294,11 +323,7 @@ export default function TravelerDashboardPage() {
                 </h3>
 
                 <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
-                  <MapPin
-                    className="size-3.5 shrink-0 text-champagne-strong"
-                    strokeWidth={1.75}
-                    aria-hidden="true"
-                  />
+                  <MapPin className="size-3.5 shrink-0 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
                   {request.originCity} →{" "}
                   {airportLabel(request.destinationAirport)}
                 </p>
@@ -325,8 +350,8 @@ export default function TravelerDashboardPage() {
         </div>
 
         <p className="mt-4 text-[0.6875rem] leading-relaxed text-muted-foreground">
-          Sample buyer requests for demonstration only. No live matching or
-          contact with buyers.
+          Demo requests for demonstration only. No live matching or contact
+          with buyers.
         </p>
       </section>
 
@@ -341,11 +366,7 @@ export default function TravelerDashboardPage() {
             className="group rounded-2xl border border-border bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-champagne-strong/60 hover:shadow-md"
           >
             <span className="grid size-10 place-items-center rounded-full border border-champagne-strong/40 bg-champagne/10">
-              <Camera
-                className="size-5 text-champagne-strong"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
+              <Camera className="size-5 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
             </span>
             <h3 className="mt-4 text-base font-medium">Purchase proof</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted">
@@ -358,11 +379,7 @@ export default function TravelerDashboardPage() {
             className="group rounded-2xl border border-border bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-champagne-strong/60 hover:shadow-md"
           >
             <span className="grid size-10 place-items-center rounded-full border border-champagne-strong/40 bg-champagne/10">
-              <QrCode
-                className="size-5 text-champagne-strong"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
+              <QrCode className="size-5 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
             </span>
             <h3 className="mt-4 text-base font-medium">Arrival & handover</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted">
@@ -371,15 +388,11 @@ export default function TravelerDashboardPage() {
           </Link>
 
           <Link
-            href="/traveler/earnings"
+            href="/traveler/payments"
             className="group rounded-2xl border border-border bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-champagne-strong/60 hover:shadow-md"
           >
             <span className="grid size-10 place-items-center rounded-full border border-champagne-strong/40 bg-champagne/10">
-              <Wallet
-                className="size-5 text-champagne-strong"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
+              <Wallet className="size-5 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
             </span>
             <h3 className="mt-4 text-base font-medium">Demo earnings</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted">
@@ -392,15 +405,11 @@ export default function TravelerDashboardPage() {
             className="group rounded-2xl border border-border bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-champagne-strong/60 hover:shadow-md"
           >
             <span className="grid size-10 place-items-center rounded-full border border-champagne-strong/40 bg-champagne/10">
-              <ShieldCheck
-                className="size-5 text-champagne-strong"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
+              <ShieldCheck className="size-5 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
             </span>
             <h3 className="mt-4 text-base font-medium">Passport KYC</h3>
             <p className="mt-1 text-xs leading-relaxed text-muted">
-              Review mock passport verification details
+              {profile ? `KYC status: {profile.kyc_status}` : "Review mock passport verification details"}
             </p>
           </Link>
         </div>

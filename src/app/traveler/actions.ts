@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import type { AuthFormState } from "@/lib/auth/form-state";
 import {
@@ -8,6 +9,7 @@ import {
   signOutTraveller,
   signUpTraveller,
 } from "@/lib/auth/traveler";
+import { createSession, destroySession } from "@/lib/auth/session";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSPORT_PATTERN = /^[A-Z0-9]{6,9}$/i;
@@ -28,7 +30,9 @@ function errorState(
   return { status: "error", message, fieldErrors };
 }
 
-const serverClient = createServerClient();
+function getServerClient() {
+  return createServerClient();
+}
 
 export async function loginTravelerAction(
   _previous: AuthFormState,
@@ -52,7 +56,7 @@ export async function loginTravelerAction(
     return errorState(fieldErrors);
   }
 
-  const result = await signInTraveller({ email, password }, serverClient);
+  const result = await signInTraveller({ email, password }, getServerClient());
 
   if (!result.ok) {
     return {
@@ -62,6 +66,24 @@ export async function loginTravelerAction(
           ? "That email and password do not match the demo traveler account."
           : "Enter a valid email and password.",
     };
+  }
+
+  // Create a mock workspace session so the middleware (proxy.ts) recognises
+  // the signed-in traveller. Supabase remains the auth authority.
+  if (result.user) {
+    try {
+      await createSession({
+        user: {
+          id: result.user.id,
+          name: result.user.email ?? "",
+          email: result.user.email ?? "",
+          workspace: "traveler",
+        },
+        issuedAt: Date.now(),
+      });
+    } catch {
+      // Cookie setting may fail in some server contexts; non-fatal.
+    }
   }
 
   redirect("/traveler/dashboard");
@@ -146,7 +168,7 @@ export async function registerTravelerAction(
    */
   const result = await signUpTraveller(
     { name: fullName, email, password },
-    serverClient
+    getServerClient()
   );
 
   if (!result.ok) {
@@ -164,10 +186,32 @@ export async function registerTravelerAction(
     };
   }
 
+  // Create a mock workspace session so the middleware recognises the new traveller.
+  if (result.user) {
+    try {
+      await createSession({
+        user: {
+          id: result.user.id,
+          name: fullName,
+          email: email,
+          workspace: "traveler",
+        },
+        issuedAt: Date.now(),
+      });
+    } catch {
+      // Non-fatal.
+    }
+  }
+
   redirect("/traveler/dashboard");
 }
 
 export async function signOutTravelerAction(): Promise<void> {
-  await signOutTraveller(serverClient);
+  await signOutTraveller(getServerClient());
+  try {
+    await destroySession("traveler");
+  } catch {
+    // Non-fatal.
+  }
   redirect("/traveler/login");
 }

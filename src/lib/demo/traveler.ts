@@ -55,11 +55,7 @@ export interface TravelerProfile {
   phone: string;
   baseCity: string;
   baseCountry: string;
-<<<<<<< Updated upstream
-  homeAirport: string;
-=======
   homeAirport: AirportCode;
->>>>>>> Stashed changes
   memberSince: string;
   tier: string;
   verification: string;

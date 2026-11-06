@@ -1,12 +1,14 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import type { AuthFormState } from "@/lib/auth/form-state";
 import {
   signInBuyer,
   signOutBuyer,
   signUpBuyer,
 } from "@/lib/auth/buyer";
+import { createSession, destroySession } from "@/lib/auth/session";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -54,6 +56,25 @@ export async function loginBuyerAction(
           ? "That email and password combination was not found. Try again or create a new account."
           : "Enter a valid email and password.",
     };
+  }
+
+  // Create a mock workspace session so the middleware (proxy.ts) recognises
+  // the signed-in buyer. Supabase remains the auth authority; the cookie is
+  // only for middleware path gating.
+  if (result.user) {
+    try {
+      await createSession({
+        user: {
+          id: result.user.id,
+          name: result.user.email ?? "",
+          email: result.user.email ?? "",
+          workspace: "buyer",
+        },
+        issuedAt: Date.now(),
+      });
+    } catch {
+      // Cookie setting may fail in some server contexts; non-fatal.
+    }
   }
 
   redirect("/buyer/dashboard");
@@ -113,10 +134,32 @@ export async function registerBuyerAction(
     };
   }
 
+  // Create a mock workspace session so the middleware recognises the new buyer.
+  if (result.user) {
+    try {
+      await createSession({
+        user: {
+          id: result.user.id,
+          name: fullName,
+          email,
+          workspace: "buyer",
+        },
+        issuedAt: Date.now(),
+      });
+    } catch {
+      // Non-fatal.
+    }
+  }
+
   redirect("/buyer/dashboard");
 }
 
 export async function signOutBuyerAction(): Promise<void> {
   await signOutBuyer();
+  try {
+    await destroySession("buyer");
+  } catch {
+    // Non-fatal.
+  }
   redirect("/buyer/login");
 }

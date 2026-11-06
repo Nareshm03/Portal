@@ -1,6 +1,7 @@
 // Task 13 Phase 3 — Buyer Dashboard (async server component)
 // Connects to GET /api/v1/me and GET /api/v1/requests/mine.
 // Replaces hardcoded demo data with live backend data.
+export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -18,6 +19,10 @@ import {
 } from "lucide-react";
 import { BuyerShell } from "@/components/buyer/buyer-shell";
 import { Badge, ButtonLink } from "@/components/ui";
+import { createProxiedApiClient } from "@/lib/api/client";
+import { createClient as createServerClient } from "@/lib/supabase/server";
+import { getBuyerProfile, requireBuyerSession } from "@/lib/auth/buyer";
+import type { Profile } from "@/lib/auth/types";
 import {
   buyerHeroImage,
   buyerProfile,
@@ -26,7 +31,6 @@ import {
 
 export const metadata: Metadata = { title: "Buyer dashboard" };
 
-<<<<<<< Updated upstream
 const STATS = [
   {
     label: "Active requests",
@@ -57,7 +61,7 @@ const STATS = [
     icon: PackageCheck,
   },
 ] as const;
-=======
+
 interface BackendRequest {
   id: string;
   buyer_id: string;
@@ -83,9 +87,9 @@ interface BackendRequest {
 }
 
 export default async function BuyerDashboardPage() {
-  // Ensure the buyer is authenticated and active on the backend.
-  await requireBuyerSession();
   const supabase = createServerClient();
+  // Ensure the buyer is authenticated and active on the backend.
+  await requireBuyerSession(supabase);
 
   // Fetch the authoritative buyer profile from the backend.
   const profileResult = await getBuyerProfile(supabase);
@@ -98,7 +102,7 @@ export default async function BuyerDashboardPage() {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token ?? null;
-    const api = createApiClient();
+    const api = createProxiedApiClient();
     const data = (await api.GET("/requests/mine", { token })) as BackendRequest[];
     requests = Array.isArray(data) ? data : [];
   } catch (err) {
@@ -111,7 +115,6 @@ export default async function BuyerDashboardPage() {
   const profile: Profile | null = profileResult.ok && profileResult.profile ? profileResult.profile : null;
 
   const firstName = profile?.full_name ? profile.full_name.split(" ")[0] : "Buyer";
->>>>>>> Stashed changes
 
   return (
     <BuyerShell active="overview">
