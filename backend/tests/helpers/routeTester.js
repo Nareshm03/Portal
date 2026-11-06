@@ -8,23 +8,48 @@
  */
 
 import { app } from '../../src/app.js';
+import { URL } from 'node:url';
 
 export function createRouteTester() {
   const self = {
     /** Invoke a route and return { statusCode, body, headers }. */
     async request(method, path, headers = {}, body = null) {
+      // Support query string as second argument with ? prefix
+      let pathname = path;
+      let queryString = '';
+
+      // Handle path with query string
+      if (typeof path === 'string' && path.includes('?')) {
+        const [pathPart, queryPart] = path.split('?');
+        pathname = pathPart;
+        queryString = queryPart;
+      }
+
+      // Parse query string into object
+      const queryParams = {};
+      if (queryString) {
+        const searchParams = new URLSearchParams(queryString);
+        for (const [key, value] of searchParams.entries()) {
+          queryParams[key] = value;
+        }
+      }
+
+      const fullUrl = `/api/v1${pathname}${queryString ? '?' + queryString : ''}`;
+
       const mockReq = {
         method,
-        url: `/api/v1${path}`,
+        url: fullUrl,
         headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...headers },
         get(name) { return this.headers[name]?.toString(); },
         body,
         socket: { encrypted: false, remoteAddress: '127.0.0.1' },
         connection: { encrypted: false, remoteAddress: '127.0.0.1' },
         httpVersion: '1.1',
-        originalUrl: `/api/v1${path}`,
+        originalUrl: fullUrl,
         ip: '127.0.0.1',
-        ips: []
+        ips: [],
+        // Expose query params for Express route handlers
+        query: queryParams
       };
 
       let statusCode = 200;
