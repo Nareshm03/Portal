@@ -1,296 +1,430 @@
-<<<<<<< HEAD
+<div align="center">
+
 # Portal
 
-A luxury stays platform with three fully separated workspaces: **Buyer**, **Traveler** and **Admin**.
+**Peer-to-Peer Cross-Border Delivery & Escrow Marketplace**
 
-This repository is a hackathon prototype. Screens are intentionally placeholders; the architecture, routing, design system and mock authentication are in place.
+*Connecting Indian buyers with verified international travelers returning to India with spare luggage capacity.*
 
-## Stack
+[![Next.js](https://img.shields.io/badge/Next.js-16.4.5-black?logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19.3.0-blue?logo=react)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38bdf8?logo=tailwindcss)](https://tailwindcss.com/)
+[![Express](https://img.shields.io/badge/Express-5.1.0-black?logo=express)](https://expressjs.com/)
+[![Node.js](https://img.shields.io/badge/Node.js->=22.0.0-green?logo=node.js)](https://nodejs.org/)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20RLS-3ecf8e?logo=supabase)](https://supabase.com/)
+[![Tests](https://img.shields.io/badge/Backend%20Tests-511%20passing-brightgreen)](#testing--verification)
 
-| Layer      | Choice                              |
-| ---------- | ----------------------------------- |
-| Framework  | Next.js 16 (App Router)             |
-| UI         | React 19                            |
-| Language   | TypeScript (strict)                 |
-| Styling    | Tailwind CSS v4                     |
-| Icons      | Lucide React                        |
-| Auth       | Auth-agnostic mock (no provider yet)|
+</div>
 
-## Getting started
+---
 
-```bash
+## Table of Contents
+
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Core Features](#core-features)
+  - [Buyer Workspace](#buyer-workspace)
+  - [Traveler Workspace](#traveler-workspace)
+  - [Admin & Compliance Operations](#admin--compliance-operations)
+  - [Help & Support Center](#help--support-center)
+- [Order Engine & State Machine](#order-engine--state-machine)
+- [Financial Safeguards & Ledger](#financial-safeguards--ledger)
+- [Dispute & Chargeback Engine](#dispute--chargeback-engine)
+- [Security & Compliance Controls](#security--compliance-controls)
+- [Tech Stack](#tech-stack)
+- [Repository Structure](#repository-structure)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Environment Configuration](#environment-configuration)
+  - [Database Setup](#database-setup)
+  - [Running Locally](#running-locally)
+- [Demo Mode vs Live Mode](#demo-mode-vs-live-mode)
+- [Testing & Verification](#testing--verification)
+- [Legal & Regulatory Notice](#legal--regulatory-notice)
+
+---
+
+## Overview
+
+**Portal** solves the friction, high markups, and authenticity concerns of international shopping. Buyers in India can request authentic products from abroad (such as luxury apparel, electronics, cosmetics, or regional exclusives), while verified international travelers monetize their unused airline luggage allowances by purchasing and transporting requested items.
+
+### Key Pillars
+- **Strict Compliance & Legal Gating:** Mandatory HS Code customs classification, automated restricted-goods filtering, and administrative compliance review before requests can be matched.
+- **Internal Escrow & Append-Only Ledger:** Upfront buyer payments are captured and locked in an `ESCROW_HOLD` account on an immutable double-entry ledger. Funds are never released to travelers upfront.
+- **Cryptographic Handover OTP:** Delivery completes only when the buyer physically inspects the item and store receipt, then shares a secret 6-digit OTP verified via timing-safe HMAC checks.
+- **Chargeback & Dispute Adjudication:** Full dispute lifecycle management with automatic settlement freezes, refund conflict blocks, private Supabase Storage evidence management, and balanced ledger reversals.
+
+---
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Client["Next.js 16 Web Client (Turbopack)"]
+        Landing["Landing & Public (/ & /how-it-works)"]
+        Help["Help & Support Center (/help)"]
+        BW["Buyer Workspace (/buyer/*)"]
+        TW["Traveler Workspace (/traveler/*)"]
+        AW["Admin Portal (/admin/*)"]
+    end
+
+    subgraph API["Express 5 Backend API (Node.js 22)"]
+        AuthMid["Auth & Role Guards"]
+        OrderEng["Order State Machine Engine"]
+        MatchingEng["Trip & Request Matcher"]
+        LedgerEng["Double-Entry Balanced Ledger"]
+        DisputeEng["Dispute & Chargeback Engine"]
+        OTPEng["OTP Verification (MSG91 / Mock)"]
+        Sched["Background Scheduler (Lock-Managed)"]
+    end
+
+    subgraph Storage["Supabase Infrastructure"]
+        SupaAuth["Supabase Auth"]
+        Postgres[("PostgreSQL Core + RLS")]
+        SupaStore[("Private Storage (KYC & Evidence)")]
+    end
+
+    subgraph External["External Providers"]
+        Razorpay["Razorpay Gateway & Webhooks"]
+        SMS["MSG91 SMS Gateway"]
+    end
+
+    Client -->|JWT / Session| API
+    API -->|Service Role RPC| Postgres
+    API -->|Private Uploads| SupaStore
+    API -->|Auth Verification| SupaAuth
+    API -->|Signed Webhooks| Razorpay
+    API -->|Handover Alerts| SMS
+```
+
+---
+
+## Core Features
+
+### Buyer Workspace
+- **Product Requests:** Post product name, merchant URL, target price, declared value, destination airport, and required delivery date.
+- **HS Code Customs Classification:** Automated categorization with compliance status tracking (`REVIEW_REQUIRED`, `APPROVED`, `REJECTED`).
+- **Quote Comparison:** Compare multiple traveler bids displaying item price, carrying fees, indicative duty, and delivery timelines.
+- **Escrow Checkout:** Secure upfront deposit via UPI, Credit/Debit cards, or Netbanking (or instant simulation in demo mode).
+- **Handover Verification:** Receive a unique 6-digit OTP once traveler marks `LANDED`; provide it only upon physical item inspection.
+
+### Traveler Workspace
+- **Trip Listings:** Register international flights from supported origin countries to Indian international airports (DEL, BOM, BLR, MAA, HYD, CCU, COK, AMD, GOI, PNQ).
+- **Luggage Monetization:** Declare available spare baggage weight (2–10 kg) and receive matched, compliance-approved buyer requests.
+- **Carry Quotes:** Submit transparent quotes itemizing product purchase price, carrying rewards, and indicative customs duties.
+- **Receipt Proof Upload:** Confirm item purchase by uploading store receipts and condition photos.
+- **OTP Verification & Payout:** Enter buyer's 6-digit OTP upon arrival to verify delivery and release ledger settlement.
+
+### Admin & Compliance Operations
+- **Compliance Reviewer Desk:** Review product requests, validate HS codes, verify that items meet passenger-baggage personal effect criteria, and reject third-party commercial imports.
+- **Duty Assessment:** Attach reviewed duty figures and statutory sources to active traveler quotes.
+- **Traveler KYC Adjudication:** Review passport identity submissions and clear accounts for active carries.
+- **Ledger Audit & Reconciliation:** Inspect immutable transaction journals, reconcile captured intents against provider webhooks, and detect balance anomalies.
+
+### Help & Support Center (`/help`)
+- **Interactive FAQ Engine:** 32 comprehensive, domain-accurate questions across 8 categories:
+  1. *Getting Started*
+  2. *Buyer Guide*
+  3. *Traveler Guide*
+  4. *Trips and Product Requests*
+  5. *Quotes and Matching*
+  6. *Payments and Orders*
+  7. *Account and Verification*
+  8. *Safety and Policies*
+- **Role & Audience Filtering:** Instant toggle between *All Audiences*, *Buyers*, *Travelers*, and *General*.
+- **Live Search & Empty State:** Real-time query matching across questions, answers, and keywords with `Escape` keyboard clear and recovery action.
+- **Accessible Accordion:** Keyboard-navigable controls (`Enter`, `Space`, `Tab`), smooth height transitions, and global *Expand All / Collapse All*.
+
+---
+
+## Order Engine & State Machine
+
+Portal enforces a strict order state machine with row-level locks in PostgreSQL, mirrored by the backend service.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACCEPTED: Quote Accepted by Buyer
+    ACCEPTED --> LOCKED: Upfront Payment Captured
+    ACCEPTED --> CANCELLED: Buyer Cancels (No Payment)
+    ACCEPTED --> EXPIRED: Payment Deadline (15m-2h) Passed
+    
+    LOCKED --> PURCHASED: Traveler Confirms Purchase & Receipt
+    LOCKED --> CANCELLED: Buyer or Traveler Cancels (Refund Required)
+    LOCKED --> DISPUTED: Dispute Opened
+    
+    PURCHASED --> LANDED: Traveler Arrives in India
+    PURCHASED --> CANCELLED: Traveler Cancels (Full Buyer Refund)
+    PURCHASED --> DISPUTED: Dispute Opened
+    
+    LANDED --> COMPLETED: Handover OTP Verified
+    LANDED --> FORFEITED: Handover Window Expired (72h)
+    LANDED --> DISPUTED: Handover Issue Raised
+    
+    CANCELLED --> REFUNDED: Reversal Ledger Posted
+    
+    COMPLETED --> [*]
+    REFUNDED --> [*]
+    EXPIRED --> [*]
+    FORFEITED --> [*]
+    DISPUTED --> [*]: Admin Mediation
+```
+
+### Order States vs Payment Intent Statuses
+
+Order states and payment intent statuses are maintained as strictly separate entities:
+
+| Category | States / Statuses | Description |
+|:---|:---|:---|
+| **Primary Order States** | `ACCEPTED`, `LOCKED`, `PURCHASED`, `LANDED`, `COMPLETED` | Sequential operational milestones from quote agreement to verified handover. |
+| **Exceptional Order States** | `DISPUTED`, `EXPIRED`, `CANCELLED`, `REFUNDED`, `FORFEITED` | Non-linear terminal or mediation hold states. |
+| **Payment Intent Statuses** | `CREATING`, `CREATED`, `AUTHORIZED`, `CAPTURED`, `FAILED`, `REFUNDED` | Provider-level transaction lifecycles tracked via `payment_intents`. |
+
+---
+
+## Financial Safeguards & Ledger
+
+Portal operates an append-only, double-entry financial ledger (`post_ledger_transaction`). No historical entry is ever modified or deleted.
+
+### Balanced Journal Entries
+Every transaction requires equal debits and credits:
+- **On Payment Capture (`LOCKED`):**
+  - `DEBIT`: `PAYMENT_CLEARING`
+  - `CREDIT`: `ESCROW_HOLD`
+- **On Handover Completion (`COMPLETED`):**
+  - `DEBIT`: `ESCROW_HOLD`
+  - `CREDIT`: `TRAVELLER_PAYABLE` (Product reimbursement + Carry reward)
+  - `CREDIT`: `DUTY_PAYABLE` (Customs duty allocation)
+  - `CREDIT`: `PLATFORM_REVENUE` (Platform service fee)
+- **On Refund (`REFUNDED`):**
+  - `DEBIT`: `ESCROW_HOLD`
+  - `CREDIT`: `PAYMENT_CLEARING` (Full or partial reversal)
+
+---
+
+## Dispute & Chargeback Engine
+
+Implemented under Task 26 to manage contested orders, damaged deliveries, and Razorpay chargeback webhooks:
+
+1. **State Machine:** `CREATED` &rarr; `UNDER_REVIEW` &rarr; `ACTION_REQUIRED` &rarr; `WON` | `LOST` &rarr; `CLOSED`.
+2. **Settlement Freeze:** Any active dispute (`CREATED`, `UNDER_REVIEW`, `ACTION_REQUIRED`) strictly blocks automatic settlement and payout releases.
+3. **Refund Conflict Prevention:** Direct cancellations and refund intents are blocked while an order is in dispute, preventing double-loss vulnerabilities.
+4. **Idempotent Webhooks:** Razorpay dispute events (`dispute.created`, `dispute.won`, `dispute.lost`, `dispute.under_review`) are verified using raw-body HMAC-SHA256 signatures and deduplicated via provider event IDs.
+5. **Private Evidence Storage:** Dispute participants and administrators upload unboxing evidence and receipts to private Supabase Storage buckets, accessed only via short-lived signed URLs.
+
+---
+
+## Security & Compliance Controls
+
+- **Strict CORS & Helmet:** Zero wildcard CORS; exact origin whitelisting (`APP_ORIGINS`).
+- **Timing-Safe OTP Verification:** 6-digit handover OTPs are hashed using server-side HMAC secrets (`OTP_PEPPER`) and verified using `crypto.timingSafeEqual`.
+- **Row-Level Security (RLS):** Supabase PostgreSQL policies enforce participant-only access for orders, messages, and uploaded documents.
+- **Service Role Seclusion:** `SUPABASE_SERVICE_ROLE_KEY` is restricted strictly to backend server processes; it is never exposed to client bundles or browser storage.
+- **Masked PII:** Phone numbers and identity documents in audit logs are masked (e.g. `+xxxxxxxx3210`) to comply with privacy frameworks.
+- **Anti-Fraud Passenger Baggage Rule:** Commercial bulk imports under passenger baggage declarations are strictly prohibited by compliance filters.
+
+---
+
+## Tech Stack
+
+### Frontend
+- **Framework:** Next.js 16.4.5 (App Router, Turbopack)
+- **Library:** React 19.3.0
+- **Language:** TypeScript 5 (Strict Mode)
+- **Styling:** Tailwind CSS v4 (Modern theme variables: Burgundy `#5b1a2b`, Champagne Gold `#d6b98c`, Cream `#f7f1e6`)
+- **Typography:** DM Serif Display (Headings), DM Sans (UI Body)
+- **Icons:** Lucide React v1.69.0
+
+### Backend
+- **Runtime:** Node.js 22+ (ECMAScript Modules)
+- **Server:** Express 5.1.0
+- **Database & Auth:** Supabase (PostgreSQL with RLS, Storage, Auth)
+- **Payment Gateway:** Razorpay SDK v2.9.6 (with full offline mock engine)
+- **SMS Gateway:** MSG91 HTTPS API (with mock fallback)
+- **Validation:** Zod v4.1.5
+- **Logging:** Pino v9.9.0 + pino-http
+
+---
+
+## Repository Structure
+
+```
+Portal/
+├── src/                               # Next.js 16 App Router Frontend
+│   ├── app/
+│   │   ├── layout.tsx                 # Root layout (fonts, theme metadata)
+│   │   ├── page.tsx                   # Public landing page
+│   │   ├── globals.css                # Tailwind CSS v4 design tokens
+│   │   ├── help/                      # Dedicated Help & Support Center (/help)
+│   │   ├── how-it-works/              # Interactive user journey guide (/how-it-works)
+│   │   ├── buyer/                     # Buyer workspace (dashboard, requests, quotes, orders)
+│   │   ├── traveler/                  # Traveler workspace (dashboard, trips, matches, orders)
+│   │   └── admin/                     # Admin workspace (compliance, KYC review, disputes)
+│   ├── components/
+│   │   ├── help/                      # HelpCenter UI (search, categories, accordion, audience)
+│   │   ├── how-it-works/              # Journey visualizers and role comparison
+│   │   ├── shared/                    # Brand mark (PortalMark), header navigation
+│   │   └── ui/                        # Button, Card, Badge, Input, EmptyState primitives
+│   ├── data/
+│   │   └── help-center.ts             # Typed FAQ data layer (32 Q&As across 8 categories)
+│   └── lib/
+│       ├── demo/                      # Offline mock fixtures (buyer, traveler, trips)
+│       └── utils.ts                   # Utility functions (cn clsx/twMerge)
+│
+├── backend/                           # Node.js Express 5 API Server
+│   ├── src/
+│   │   ├── config/                    # Environment validation, logger, constants
+│   │   ├── middleware/                # Auth, role check, raw body parser, error handler
+│   │   ├── routes/                    # API routes (api, admin, webhooks, uploads, conversations)
+│   │   ├── scheduler/                 # Distributed lock manager and background runner
+│   │   ├── services/                  # State machine, ledger, disputes, refund, matching, OTP
+│   │   └── index.js                   # Application bootstrap
+│   ├── supabase/migrations/           # PostgreSQL schemas, RLS policies, RPC stored procedures
+│   └── tests/                         # Node.js native test suite (511 passing tests)
+│
+├── tests/                             # Root test suite (helpCenter.test.mjs)
+├── package.json                       # Frontend dependencies & scripts
+└── task26_dispute_chargeback_engine.md # Detailed dispute architecture audit
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+- **Node.js:** v22.0.0 or higher
+- **npm:** v10 or higher
+- **Supabase Account:** (Optional for Demo mode; required for Live mode)
+
+### Installation
+
+Clone the repository and install dependencies for both frontend and backend:
+
+```powershell
+# 1. Clone repository
+git clone https://github.com/your-username/portal.git
+cd portal
+
+# 2. Install frontend dependencies
 npm install
+
+# 3. Install backend dependencies
+cd backend
+npm install
+cd ..
+```
+
+### Environment Configuration
+
+#### Backend Configuration (`backend/.env`):
+Copy the example environment file:
+```powershell
+Copy-Item backend/.env.example backend/.env
+```
+
+Key variables to configure:
+```env
+PORT=4000
+NODE_ENV=development
+APP_ORIGINS=http://localhost:3000
+
+# Payments (Default is offline mock mode)
+MOCK_PAYMENTS=true
+PAYMENTS_ENABLED=false
+RAZORPAY_KEY_ID=rzp_test_placeholder
+RAZORPAY_KEY_SECRET=rzp_secret_placeholder
+RAZORPAY_WEBHOOK_SECRET=webhook_secret_placeholder
+
+# OTP Delivery (Default is offline mock mode)
+OTP_PROVIDER=mock
+OTP_PEPPER=dev_otp_pepper_minimum_32_characters_long_secret
+
+# Supabase (Optional for local mock development)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+#### Frontend Configuration (`.env.local`):
+```env
+NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
+### Database Setup
+
+If connecting to a live Supabase project:
+1. Open your **Supabase Project Dashboard** &rarr; **SQL Editor**.
+2. Run the migration scripts in order:
+   - `backend/supabase/migrations/202611050001_portal_core.sql` (Tables, RLS, Core RPCs)
+   - `backend/supabase/migrations/202611060001_kyc_submissions.sql` (KYC Workflow)
+   - `backend/supabase/migrations/202611060002_refunds.sql` (Refund Engine & Ledger Reversals)
+   - `backend/supabase/migrations/202611060002_disputes.sql` (Dispute & Chargeback Engine)
+
+### Running Locally
+
+Open two terminal sessions:
+
+```powershell
+# Terminal 1: Start Backend API (Port 4000)
+cd backend
+npm run dev
+
+# Terminal 2: Start Frontend Web Application (Port 3000)
 npm run dev
 ```
 
-Open <http://localhost:3000>.
+Visit [`http://localhost:3000`](http://localhost:3000) in your browser.
 
-```bash
-npm run lint     # ESLint
-npm run build    # production build
-npm start        # serve the production build
-```
+---
 
-## Workspace routes
+## Demo Mode vs Live Mode
 
-Every workspace owns a URL prefix, an auth module and a cookie. Nothing is shared.
+Portal includes a first-class **Dual-Mode architecture**:
 
-| Workspace | Sign in            | Register               | Dashboard              |
-| --------- | ------------------ | ---------------------- | ---------------------- |
-| Buyer     | `/buyer/login`     | `/buyer/register`      | `/buyer/dashboard`     |
-| Traveler  | `/traveler/login`  | `/traveler/register`   | `/traveler/dashboard`  |
-| Admin     | `/admin/login`     | — (invite only)        | `/admin/dashboard`     |
+| Feature | Demo Mode (Offline Preview) | Live Mode (Production Target) |
+|:---|:---|:---|
+| **Database** | Built-in typed mock data fixtures | Supabase PostgreSQL with strict RLS |
+| **Authentication** | Workspace session switcher | Supabase Auth (Magic Link & Phone OTP) |
+| **Payments** | Simulated instant payment capture | Razorpay Checkout + Raw-Body Webhooks |
+| **Ledger** | Internal memory/RPC simulated ledger | Immutable PostgreSQL `ledger_entries` |
+| **SMS OTP** | Console / Mock delivery generator | MSG91 Enterprise SMS Delivery |
+| **KYC** | Sandbox verification indicators | Verified government passport KYC |
 
-### Mock credentials
+*The application never silently switches between live and mock states; mode status is displayed with clear UI badges.*
 
-The mock account store seeds one demo account per workspace:
+---
 
-| Workspace | Email                   | Password      |
-| --------- | ----------------------- | ------------- |
-| Buyer     | `buyer@portal.demo`     | `portal-demo` |
-| Traveler  | `traveler@portal.demo`  | `portal-demo` |
-| Admin     | `admin@portal.demo`     | `portal-demo` |
+## Testing & Verification
 
-> The mock store lives in module memory and resets on server restart. Sessions are base64url-encoded cookies — **not** signed or encrypted. Do not use any of this in production.
-
-## Separation model
-
-- **Routes** — literal `/buyer`, `/traveler`, `/admin` segments, each with its own `layout.tsx`.
-- **Cookies** — `portal_buyer_session`, `portal_traveler_session`, `portal_admin_session`, each scoped to its own path (`/buyer`, `/traveler`, `/admin`).
-- **Auth modules** — `src/lib/auth/buyer.ts`, `traveler.ts`, `admin.ts` expose workspace-specific `get*Session`, `signIn*`, `signUp*` (Buyer/Traveler only), `signOut*` and `require*Session` functions. There is deliberately no shared “current user” helper.
-- **Guard** — `src/lib/auth/session.ts` rejects a session whose `user.workspace` does not match the requested workspace, so a Buyer cookie can never satisfy a Traveler or Admin request.
-
-Swapping the mock for Supabase, Clerk or Auth.js only requires implementing the `AuthAdapter` contract in `src/lib/auth/types.ts`.
-
-## Project structure
-
-```
-src/
-├─ app/
-│  ├─ layout.tsx              root layout, fonts, metadata
-│  ├─ page.tsx                landing / workspace chooser
-│  ├─ globals.css             design tokens + base typography
-│  ├─ not-found.tsx
-│  ├─ buyer/                  /buyer/*
-│  ├─ traveler/               /traveler/*
-│  └─ admin/                  /admin/*
-├─ components/
-│  ├─ shared/                 brand mark, workspace badge, placeholder shell
-│  └─ ui/                     design-system primitives (to come)
-├─ hooks/                     client hooks (to come)
-├─ lib/
-│  ├─ auth/                   types, mock store, session transport, per-workspace APIs
-│  ├─ utils.ts                cn() helper
-│  └─ workspaces.ts           single source of truth for paths and cookies
-└─ types/                     shared domain types (to come)
-```
-
-## Design direction
-
-Luxury black, champagne gold and cream. Tokens are defined once in `src/app/globals.css`:
-
-- `--obsidian` / `--obsidian-soft` — near-black surfaces
-- `--gold` / `--gold-strong` / `--gold-soft` — champagne accents
-- `--background`, `--surface`, `--surface-muted` — cream canvas
-- Typography: Geist Sans for UI, a serif stack for display headings, uppercase gold eyebrows for section labels
-
-Use the semantic utilities (`bg-surface`, `text-gold`, `border-border`, `font-serif`, `eyebrow`) instead of raw hex values.
-
-## Not built yet
-
-- Sign-in and registration forms (mock auth functions are ready to call)
-- Buyer, Traveler and Admin dashboards
-- Route protection enforcement (guards exist but redirects are not wired into requests)
-- Per-workspace visual differentiation beyond the header label
-=======
-# PORTAL Backend — secure MVP foundation
-
-This repository is the first backend implementation slice for Portal. It is a development foundation, not a production payment/escrow system and not a determination that carrying third-party goods in passenger baggage is lawful.
-
-## What is implemented
-
-- Express API on Node.js 22.
-- Supabase Auth token verification on the server.
-- Server-side roles and account/KYC checks.
-- Supabase PostgreSQL schema and RLS policies for profiles, trips, requests, quotes, orders, payment intents, webhooks, OTP challenges, audit events and the ledger.
-- Compliance gate: passenger-baggage requests for another person are `REVIEW_REQUIRED`, cannot be matched, and cannot be paid for until a reviewer approves a lawful route.
-- FX conversion using integer minor units and a six-decimal fixed-point rate; no JavaScript floating-point money calculations.
-- A shared order state machine plus a database-side row-locked transition function.
-- Initial deposit calculation (current default: 25%) and platform fee calculation (current default: 5%). These are configuration defaults, not signed commercial terms.
-- Demo payment intent flow. No money is collected in mock mode.
-- Razorpay adapter, checkout-signature validation and raw-body webhook signature verification, but real payment mode is disabled by default.
-- Append-only, balanced ledger posting function with idempotency keys.
-- OTP generation/hash/verification primitives using HMAC and timing-safe comparison.
-- 15-minute initial payment deadline and 72-hour post-arrival handover deadline job.
-- Unit tests for state transitions, money, FX, legal gate, ledger and OTP.
-
-## Explicitly not implemented / not approved
-
-1. No legally approved escrow account, money custody or payouts to travellers.
-2. No live FX-rate provider. The `.env.example` FX rates are labelled demo configuration and must never be used to make a real purchase.
-3. No customs tariff engine. The platform refuses to accept a quote until duty is manually reviewed and recorded by the compliance process.
-4. No production KYC vendor. `/kyc/submit` records `SUBMITTED` only. It never marks a user `VERIFIED`.
-5. No shipment/courier integration, GST invoicing, consumer policy, refund engine or production dispute adjudication.
-6. No legal conclusion about third-party goods in passenger baggage. Get written advice from an Indian customs professional and payment/regulatory counsel before opening the marketplace.
-
-## Requirements
-
-- Node.js 22 or later
-- A Supabase project
-- npm
-
-## Local setup (Windows PowerShell)
+The project includes unit and integration test coverage across the state machine, ledger balance, payment gateways, dispute engine, and help center:
 
 ```powershell
-# Extract the ZIP into your chosen project folder first.
-cd D:\Projects\PORTAL\portal-backend
-Copy-Item .env.example .env
-notepad .env
-npm install
+# Run Backend Test Suite (511 tests)
+cd backend
 npm test
-npm run dev
+
+# Run Help & Support Center Test Suite
+cd ..
+node --test tests/helpCenter.test.mjs
+
+# Run Frontend Typecheck
+npx tsc --noEmit
+
+# Run Frontend ESLint
+npx eslint src/
+
+# Run Production Frontend Build
+npm run build
 ```
 
-The server listens on `http://localhost:4000` by default. Health check:
+---
 
-```powershell
-Invoke-RestMethod http://localhost:4000/api/v1/health
-```
+## Legal & Regulatory Notice
 
-## Supabase setup
-
-1. Create a Supabase project.
-2. Open **SQL Editor** and run `supabase/migrations/202611050001_portal_core.sql` once.
-3. In Project Settings → API, copy the project URL and the **service_role** key into the backend `.env` only.
-4. Never place `SUPABASE_SERVICE_ROLE_KEY` in Meghana's frontend `.env`, browser code, GitHub, screenshots or Postman shared environments.
-5. The frontend may use the Supabase anon/publishable key for Auth only. All privileged writes must go through this backend.
-
-### Bootstrap a development admin
-
-Create a user through Supabase Auth, then use SQL Editor once to assign the first admin. Replace the UUID with the actual Auth user UUID:
-
-```sql
-update public.profiles
-set role = 'admin', account_status = 'ACTIVE'
-where id = 'YOUR_AUTH_USER_UUID';
-```
-
-Do this only in the development project. A production admin must use controlled provisioning, MFA and documented access approval.
-
-For a local-only demo, a reviewer can activate a test buyer or traveller after reviewing the test account. Never manually set `kyc_status='VERIFIED'` for a real person without completing the selected KYC process and recording its provider reference.
-
-## Environment settings
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `MOCK_PAYMENTS` | Simulated payment intent; never transfers money | `true` |
-| `PAYMENTS_ENABLED` | Explicit gate for real payment provider calls | `false` |
-| `PLATFORM_FEE_BPS` | Platform fee, basis points (500 = 5%) | `500` |
-| `BUYER_DEPOSIT_BPS` | Initial buyer deposit (2500 = 25%) | `2500` |
-| `ORDER_PAYMENT_TTL_MINUTES` | Buyer payment window after accepting quote | `15` |
-| `FX_RATE_TABLE_JSON` | Server-side demo rates only | Example JSON |
-| `OTP_PEPPER` | HMAC secret for OTP hashes | Development placeholder |
-
-For production, load secrets from the host's secret manager. Do not commit `.env`. Do not use the sample FX rates. A production FX provider must return a provider timestamp, currency pair, rate, and source identifier; the quote must be frozen with an explicit expiry and never silently repriced.
-
-## Demo flow / important blockers
-
-The following approvals are deliberate. The marketplace remains closed unless all checks pass.
-
-1. Sign up users with Supabase Auth. The database trigger creates every account as a `buyer` with `PENDING` account status; client metadata cannot self-assign role or KYC state.
-2. An active admin provisions the account through `POST /api/v1/admin/profiles/:id/role` with `{\"role\":\"buyer\"}` or `{\"role\":\"traveller\"}`. Traveller accounts stay `PENDING` until KYC is approved. Privileged admin/reviewer roles are bootstrapped out of band and cannot be assigned by this endpoint.
-3. Finish real KYC outside the demo stub. The demo `/api/v1/kyc/submit` is not verification. An admin records the provider decision using `/api/v1/admin/profiles/:id/kyc-review`.
-4. A compliance reviewer must review the request, HS classification, restricted-goods checks and lawful import channel before changing it to `APPROVED` and `OPEN` using `POST /api/v1/admin/requests/:id/review`.
-5. The traveller must have verified KYC and an active trip. A platform admin activates the trip using `POST /api/v1/admin/trips/:id/activate`.
-6. Traveller creates a quote. The FX rate is taken from server configuration, not from client input. The included rates are static demonstration values, not live market rates; quote acceptance is blocked until the duty amount is reviewed and recorded by the trusted compliance workflow.
-7. Buyer accepts an eligible quote. The backend atomically creates one `ACCEPTED` order and sets a 15-minute payment deadline.
-8. Buyer creates a payment intent using `POST /api/v1/payments/create-order` with an `Idempotency-Key` header. In mock mode this does not collect money.
-9. In development only, mock verification moves the order to `LOCKED`. This is a simulation; do not tell a user that funds are held or protected.
-10. The traveller reports `PURCHASED`, then `LANDED`. The system sets a 72-hour handover deadline. The buyer reports `COMPLETED`, or an overdue landed order enters `FORFEITED` through the expiry job. A disputed order is held for manual resolution; its business meaning and any forfeiture/refund waterfall require a signed policy.
-
-## Run the 72-hour / payment-window expiry job
-
-Run manually:
-
-```powershell
-npm run expire-orders
-```
-
-Deploy it as a Render Cron Job on a 1–5 minute schedule. The job is safe to retry because transitions are checked in PostgreSQL. It skips unresolved live Razorpay intents for manual reconciliation; it never auto-expires a live payment that might still be captured. Do not expose a public `/admin/expire-now` route in production.
-
-## API routes (v1)
-
-| Method | Route | Access | Purpose |
-|---|---|---|---|
-| GET | `/api/v1/health` | Public | Health check |
-| GET | `/api/v1/config` | Public | Public feature flags |
-| GET | `/api/v1/me` | Authenticated | Current profile |
-| GET | `/api/v1/fx/convert?amountMinor=10000&from=USD` | Authenticated | Indicative fixed-point conversion to INR |
-| POST | `/api/v1/requests` | Buyer | Create request; starts in compliance review |
-| GET | `/api/v1/requests/mine` | Buyer | List own requests |
-| GET | `/api/v1/requests?matching=me` | Verified traveller | Find approved exact-route matches |
-| POST | `/api/v1/trips` | Verified traveller | Create draft trip |
-| GET | `/api/v1/trips/mine` | Traveller | List own trips |
-| POST | `/api/v1/requests/:id/quotes` | Verified traveller | Create quote using server FX rate |
-| GET | `/api/v1/requests/:id/quotes` | Request participant/reviewer | List request quotes |
-| POST | `/api/v1/quotes/:id/accept` | Buyer | Atomically accept an eligible quote |
-| POST | `/api/v1/payments/create-order` | Buyer | Create idempotent payment intent |
-| POST | `/api/v1/payments/verify` | Buyer | Verify mock or provider payment |
-| GET | `/api/v1/orders/:id` | Order participant | Get order and state history |
-| POST | `/api/v1/orders/:id/purchased` | Assigned traveller | Mark purchased |
-| POST | `/api/v1/orders/:id/landed` | Assigned traveller | Mark arrived |
-| POST | `/api/v1/orders/:id/handover` | Buyer | Confirm handover/completion |
-| POST | `/api/v1/orders/:id/dispute` | Order participant | Open dispute |
-| POST | `/api/v1/kyc/submit` | Authenticated | Demo submission only |
-| POST | `/api/v1/admin/requests/:id/review` | Compliance reviewer/admin | Approve/reject legal route |
-| POST | `/api/v1/admin/quotes/:id/duty-assessment` | Compliance reviewer/admin | Attach reviewed duty figure and source |
-| POST | `/api/v1/admin/trips/:id/activate` | Admin | Activate cleared trip |
-| POST | `/api/v1/admin/profiles/:id/role` | Admin | Assign buyer/traveller role; buyer activates, traveller requires KYC |
-| POST | `/api/v1/admin/profiles/:id/kyc-review` | Admin | Record KYC provider decision transactionally with audit |
-| POST | `/api/v1/webhooks/razorpay` | Razorpay signature | Raw-body webhook receiver |
-
-All error responses use:
-
-```json
-{
-  "error": {
-    "code": "SOME_CODE",
-    "message": "Human-readable message",
-    "requestId": "trace-id"
-  }
-}
-```
-
-## Security baseline
-
-- HTTPS is mandatory in production; configure TLS at the host/load balancer.
-- Use exact frontend origins in `APP_ORIGINS`; no wildcard CORS.
-- Keep Supabase service-role, Razorpay secret, webhook secret and OTP pepper in server secrets only.
-- Require Supabase Auth on protected routes and check server-side roles/account status.
-- Enable MFA for admins and reviewers in Supabase Auth; provision privileged roles out of band.
-- Keep all ledger and order events append-only; corrections are compensating entries, not edits.
-- Use unique idempotency keys for payment creation and unique provider event IDs for webhook replay protection.
-- Verify Razorpay webhook HMAC over exact raw bytes and validate captured amount/currency/order against the server record.
-- Do not store card numbers, CVV, bank passwords, raw OTPs, passport scans or KYC documents in application tables.
-- Store any required identity documents in a private, access-controlled object store through a verified KYC provider; short-lived signed URLs only.
-- Keep data collection minimal, define retention/deletion workflows and prepare privacy notices/consent before production. The DPDP Rules, 2025 include security safeguards such as encryption/masking, access control, monitoring, backups and breach response; applicability/commencement must be reviewed against the current phased timeline.
-- Log security events without secrets, OTP values, access tokens, payment credentials or unmasked sensitive documents.
-- Add automated dependency scanning, secret scanning, SAST, database backup/restore drills and an independent penetration test before launch.
-
-## Financial and legal sign-off still required
-
-- The 5% fee and 25% deposit are configurable draft values; reconcile the original spec examples and refund rules.
-- Decide the exact release/refund/forfeit waterfall with a lawyer and the payment provider.
-- Confirm whether the chosen payment arrangement is domestic PA, PA-CB, a marketplace split-settlement product, or another regulated flow. Obtain written confirmation from the payment provider and counsel.
-- Confirm the import model: passenger baggage is not a shortcut for commercial third-party imports. Consider formal import/courier with an importer of record and customs broker.
-- Build correct HS classification, product restrictions, valuation, country-specific import permission, customs duty/tax and invoice process with qualified advice.
-- Document GST, consumer protection, platform intermediary, grievance, refund, dispute, accounting and tax obligations.
-
-## Tests
-
-```powershell
-npm test
-```
-
-The tests are unit tests for deterministic services. Before a production release, add integration tests against a disposable Supabase project, webhook replay tests, concurrent quote/payment tests, RLS tests using anon/authenticated/service-role tokens, load tests and end-to-end abuse cases.
->>>>>>> cb3685cd4cf63eec7590c45488360f154886747e
+> **IMPORTANT:** Portal is a technology platform connecting individual travelers and buyers. Portal does not sell, ship, import, or clear merchandise through customs, and does not provide legal, customs, or tax advice.
+> 
+> - Duty figures provided on quotes are **indicative estimates only**.
+> - International travelers are solely responsible for declaring dutiable goods at airport customs (Red Channel) under Indian Central Board of Indirect Taxes and Customs (CBIC) passenger baggage regulations.
+> - Commercial quantities, contraband, and hazardous goods are strictly prohibited.

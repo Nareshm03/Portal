@@ -81,7 +81,11 @@ apiRouter.get('/health', (_req, res) => res.json({ status: 'ok', service: 'porta
 apiRouter.get('/config', (_req, res) => res.json({
   currency: 'INR', supportedQuoteCurrencies: ['INR', ...Object.entries(env.fxRateTable).filter(([, pairs]) => typeof pairs?.INR === 'string').map(([code]) => code).sort()],
   mockPayments: env.MOCK_PAYMENTS, realPaymentsEnabled: env.PAYMENTS_ENABLED && !env.MOCK_PAYMENTS,
-  complianceApprovalRequired: true
+  complianceApprovalRequired: true,
+  razorpayTestModeAvailable: env.RAZORPAY_USE_TEST_MODE === 'true' || (!!env.RAZORPAY_TEST_KEY_ID && !!env.RAZORPAY_TEST_KEY_SECRET),
+  razorpayLiveModeAvailable: !!env.RAZORPAY_KEY_ID && !!env.RAZORPAY_KEY_SECRET,
+  usingRazorpayTestMode: env.RAZORPAY_USE_TEST_MODE === 'true',
+  paymentMode: env.MOCK_PAYMENTS ? 'MOCK' : (env.RAZORPAY_USE_TEST_MODE === 'true' ? 'TEST' : (env.PAYMENTS_ENABLED ? 'LIVE' : 'MOCK')),
 }));
 
 
@@ -256,7 +260,7 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
   const { data: existing } = await supabase().from('payment_intents').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
   if (existing) {
     if (existing.order_id !== order.id || existing.buyer_id !== req.user.id) throw new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', 'This idempotency key is already bound to another operation.');
-    return res.json({ data: { id: existing.id, provider: existing.provider, providerOrderId: existing.provider_order_id, amountPaise: existing.amount_paise, status: existing.status, mock: existing.provider === 'MOCK' } });
+    return res.json({ data: { id: existing.id, provider: existing.provider, providerOrderId: existing.provider_order_id, amountPaise: existing.amount_paise, status: existing.status, mock: existing.provider === 'MOCK' }, duplicate: true });
   }
 
   const provider = env.MOCK_PAYMENTS ? 'MOCK' : 'RAZORPAY';
@@ -267,7 +271,7 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
   const intentId = randomUUID();
   const { data: intent, error: insertError } = await supabase().from('payment_intents').insert({
     id: intentId, order_id: order.id, buyer_id: req.user.id, provider,
-    idempotency_key: idempotencyKey, amount_paise: order.deposit_paise, currency: 'INR', status: 'CREATING'
+    idempotency_key: idempotencyKey, amount_paise: order.upfront_paise, currency: 'INR', status: 'CREATING'
   }).select('*').single();
   if (insertError) {
     if (insertError.code === '23505') {
@@ -311,6 +315,8 @@ apiRouter.post('/payments/verify', requireAuth, requireRole('buyer'), async (req
       const { error: retryError } = await supabase().rpc('transition_order', { p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Idempotent retry: payment already captured.' });
       if (retryError) throw new HttpError(409, 'ORDER_LOCK_RETRY_FAILED', 'Payment is captured, but the order still needs support review.');
     }
+    const { data: fullOrder } = await supabase().from('orders').select('*').eq('id', intent.order_id).single();
+    if (fullOrder) await postCollectionLedger(supabase(), fullOrder, req.user.id);
     return res.json({ data: { status: 'CAPTURED', orderId: intent.order_id, duplicate: true } });
   }
 
@@ -333,6 +339,8 @@ apiRouter.post('/payments/verify', requireAuth, requireRole('buyer'), async (req
     p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Initial payment verified.'
   });
   if (transitionError) throw new HttpError(409, 'ORDER_LOCK_FAILED', 'Payment was verified but the order could not be locked. Contact support with the request ID.');
+  const { data: fullOrder } = await supabase().from('orders').select('*').eq('id', intent.order_id).single();
+  if (fullOrder) await postCollectionLedger(supabase(), fullOrder, req.user.id);
   res.json({ data: { status: 'CAPTURED', orderId: intent.order_id, orderState: 'LOCKED' }, warning: intent.provider === 'MOCK' ? 'Demo payment only. No money moved.' : undefined });
 });
 

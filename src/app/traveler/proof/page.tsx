@@ -204,6 +204,11 @@ export default function TravelerProofPage() {
     }
   };
 
+  const handleDownloadSlot = (uploadId: string | null, orderId: string, fileName: string | null) => {
+    if (!uploadId || !fileName) return;
+    handleDownload(uploadId, orderId, fileName);
+  };
+
   const handleDownload = async (uploadId: string, orderId: string, filename: string) => {
     try {
       if (!supabase) throw new Error("Supabase not configured.");
@@ -434,10 +439,7 @@ export default function TravelerProofPage() {
                                 <div className="mt-3 flex gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const uploadId = slot.uploadId;
-                                      if (uploadId) handleDownload(uploadId, order.id, slot.fileName);
-                                    }}
+                                    onClick={() => handleDownloadSlot(slot.uploadId, order.id, slot.fileName)}
                                     className="rounded-md text-xs font-medium text-champagne-strong transition-colors hover:text-champagne/90"
                                   >
                                     Download
