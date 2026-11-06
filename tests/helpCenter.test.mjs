@@ -41,23 +41,37 @@ describe("Help & Support Center Data Layer & Requirements", () => {
     }
   });
 
-  test("Covers core authentic Portal features without fictitious claims", () => {
-    // Escrow protection
-    assert.ok(fileContent.includes("Escrow") || fileContent.includes("escrow"), "Must mention Escrow");
+  test("Strictly conforms to Naresh's Order Engine contract", () => {
+    // Primary linear order states
+    assert.ok(fileContent.includes("ACCEPTED"), "Must mention ACCEPTED order state");
+    assert.ok(fileContent.includes("LOCKED"), "Must mention LOCKED order state");
+    assert.ok(fileContent.includes("PURCHASED"), "Must mention PURCHASED order state");
+    assert.ok(fileContent.includes("LANDED"), "Must mention LANDED order state");
+    assert.ok(fileContent.includes("COMPLETED"), "Must mention COMPLETED order state");
+
+    // Exceptional order states
+    assert.ok(fileContent.includes("DISPUTED"), "Must mention DISPUTED state");
+    assert.ok(fileContent.includes("CANCELLED"), "Must mention CANCELLED state");
+    assert.ok(fileContent.includes("REFUNDED"), "Must mention REFUNDED state");
+    assert.ok(fileContent.includes("EXPIRED"), "Must mention EXPIRED state");
+    assert.ok(fileContent.includes("FORFEITED"), "Must mention FORFEITED state");
+
+    // Payment statuses separate from order states
+    assert.ok(fileContent.includes("Payment Intent"), "Must discuss Payment Intent");
+    assert.ok(fileContent.includes("CAPTURED"), "Must mention CAPTURED payment status");
+  });
+
+  test("Maintains accurate domain facts without unsupported promises", () => {
+    // 12 Origin countries from buyer.ts
+    assert.ok(fileContent.includes("12 countries"), "Must reflect 12 supported origin countries");
+    // Escrow is internal ledger hold (ESCROW_HOLD)
+    assert.ok(fileContent.includes("ESCROW_HOLD"), "Must mention ESCROW_HOLD ledger account");
+    // Duty estimates are indicative only, not customs advice
+    assert.ok(fileContent.includes("indicative"), "Duty estimates must be marked indicative");
     // Handover OTP
-    assert.ok(fileContent.includes("OTP"), "Must explain Handover OTP verification");
-    // HS code customs classification
-    assert.ok(fileContent.includes("HS Code") || fileContent.includes("HS code"), "Must explain HS Code classification");
+    assert.ok(fileContent.includes("6-digit Handover OTP") || fileContent.includes("Handover OTP"), "Must mention Handover OTP");
     // Prohibited items
     assert.ok(fileContent.includes("prohibited") || fileContent.includes("Prohibited"), "Must list prohibited goods");
-    // Payout and carry rewards
-    assert.ok(fileContent.includes("carry reward") || fileContent.includes("reward"), "Must explain carry reward");
-    // Order stages
-    assert.ok(fileContent.includes("LOCKED"), "Must mention LOCKED stage");
-    assert.ok(fileContent.includes("LANDED"), "Must mention LANDED stage");
-    assert.ok(fileContent.includes("DELIVERED"), "Must mention DELIVERED stage");
-    // Disputes
-    assert.ok(fileContent.includes("dispute") || fileContent.includes("Dispute"), "Must cover disputes");
   });
 
   test("UI components exist in src/components/help/", () => {

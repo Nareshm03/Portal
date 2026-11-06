@@ -1,11 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { ButtonLink } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
-export interface CTASectionProps {}
+export type CTASectionProps = Record<string, never>;
 
 export function CTASection() {
   return (

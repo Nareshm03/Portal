@@ -18,13 +18,12 @@ const TRAVELLER_DATA = {
   receives: "Carrying fees released after verified handover",
 };
 
-export interface RoleComparisonProps {}
+export type RoleComparisonProps = Record<string, never>;
 
 export function RoleComparison() {
   const [activeRole, setActiveRole] = useState<"buyer" | "traveler">("buyer");
 
   const data = activeRole === "buyer" ? BUYER_DATA : TRAVELLER_DATA;
-  const icon = activeRole === "buyer" ? UserRound : Plane;
   const roleLabel = activeRole === "buyer" ? "Buyer" : "Traveller";
 
   return (

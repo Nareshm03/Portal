@@ -41,7 +41,7 @@ const TRAVELLER_STEPS = [
   },
 ];
 
-export interface TravellerJourneyProps {}
+export type TravellerJourneyProps = Record<string, never>;
 
 export function TravellerJourney() {
   return (

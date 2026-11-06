@@ -41,7 +41,7 @@ const BUYER_STEPS = [
   },
 ];
 
-export interface BuyerJourneyProps {}
+export type BuyerJourneyProps = Record<string, never>;
 
 export function BuyerJourney() {
   return (

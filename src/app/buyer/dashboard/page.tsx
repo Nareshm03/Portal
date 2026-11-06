@@ -26,6 +26,7 @@ import {
 
 export const metadata: Metadata = { title: "Buyer dashboard" };
 
+<<<<<<< Updated upstream
 const STATS = [
   {
     label: "Active requests",
@@ -56,6 +57,61 @@ const STATS = [
     icon: PackageCheck,
   },
 ] as const;
+=======
+interface BackendRequest {
+  id: string;
+  buyer_id: string;
+  origin_country: string;
+  origin_airport_code: string;
+  destination_country: string;
+  destination_airport_code: string;
+  needed_by: string;
+  product_title: string;
+  product_category: string;
+  product_url: string | null;
+  quantity: number;
+  declared_value_minor: number | null;
+  declared_currency: string | null;
+  hs_code: string | null;
+  fulfilment_mode: string;
+  is_for_third_party: boolean;
+  compliance_status: string;
+  compliance_reason: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export default async function BuyerDashboardPage() {
+  // Ensure the buyer is authenticated and active on the backend.
+  await requireBuyerSession();
+  const supabase = createServerClient();
+
+  // Fetch the authoritative buyer profile from the backend.
+  const profileResult = await getBuyerProfile(supabase);
+
+  // Fetch the buyer's requests from the backend using the access token.
+  let requests: BackendRequest[] = [];
+  let requestsError: string | null = null;
+  let isLoadingRequests = true;
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token ?? null;
+    const api = createApiClient();
+    const data = (await api.GET("/requests/mine", { token })) as BackendRequest[];
+    requests = Array.isArray(data) ? data : [];
+  } catch (err) {
+    requestsError =
+      err instanceof Error ? err.message : "Failed to load requests.";
+  } finally {
+    isLoadingRequests = false;
+  }
+
+  const profile: Profile | null = profileResult.ok && profileResult.profile ? profileResult.profile : null;
+
+  const firstName = profile?.full_name ? profile.full_name.split(" ")[0] : "Buyer";
+>>>>>>> Stashed changes
 
   return (
     <BuyerShell active="overview">

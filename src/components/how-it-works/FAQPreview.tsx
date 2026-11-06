@@ -26,7 +26,7 @@ const FAQS = [
   },
 ];
 
-export interface FAQPreviewProps {}
+export type FAQPreviewProps = Record<string, never>;
 
 export function FAQPreview() {
   return (
@@ -38,7 +38,7 @@ export function FAQPreview() {
         </div>
 
         <div className="space-y-3">
-          {FAQS.map((faq, index) => (
+          {FAQS.map((faq) => (
             <div
               key={faq.question}
               className="group relative border-b border-border pb-4"

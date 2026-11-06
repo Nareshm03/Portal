@@ -92,7 +92,7 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "all",
     question: "What is Portal and how does it work?",
     answer:
-      "Portal is a peer-to-peer cross-border delivery marketplace connecting Indian buyers wanting authentic international items with trusted travelers flying home to India. Buyers publish product requests, verified travelers submit carry quotes with transparent rewards and estimated duty, and payments are held in secure escrow until physical handover is confirmed via a secure OTP code.",
+      "Portal is a peer-to-peer marketplace technology platform connecting Indian buyers seeking authentic international products with verified travelers flying to India with spare baggage capacity. Buyers publish requests, travelers submit carrying quotes with item costs, carrying fees, and indicative customs duty, and payments are held in an internal escrow hold until in-person handover is verified via a secure OTP code.",
     keywords: ["portal", "how it works", "overview", "basics", "introduction", "peer delivery"],
   },
   {
@@ -101,7 +101,7 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "all",
     question: "Can I use Portal as both a Buyer and a Traveler?",
     answer:
-      "Yes. Your single Portal account lets you switch freely between the Buyer workspace and the Traveler workspace using the top navigation header or profile switcher. You can buy hard-to-find international items when at home, and earn carry rewards by transporting items on your international trips.",
+      "Yes. Your single Portal account lets you switch between the Buyer workspace and the Traveler workspace using the top navigation header or profile switcher. You can place product requests when in India, and list upcoming international itineraries to earn carrying rewards when traveling.",
     keywords: ["switch role", "buyer and traveler", "account", "dual role", "profile"],
   },
   {
@@ -110,16 +110,16 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "all",
     question: "What is Demo Mode vs Live Mode?",
     answer:
-      "Portal includes a full Demo Mode with pre-populated international trips, mock product requests, sample quotes, and simulated orders. Demo mode allows you to explore the complete buyer and traveler lifecycle without processing real financial charges or connecting live payment gateways. In Live mode, transactions and authentication connect to our secure cloud database and payment processors.",
+      "Portal includes a comprehensive Demo Mode with pre-seeded sample trips, mock product requests, illustrative quotes, and simulated order lifecycles. Demo mode enables end-to-end evaluation without live payment gateways, active bank accounts, or real passport verification. In Live mode, operations interact with configured database services, SMS OTP delivery, and payment provider integrations.",
     keywords: ["demo mode", "live mode", "preview", "test mode", "offline"],
   },
   {
     id: "gs-4",
     categoryId: "getting-started",
     audience: "all",
-    question: "Which Indian cities and airports are currently supported?",
+    question: "Which destination airports are supported in India?",
     answer:
-      "Portal currently supports primary international arrival hubs across India: Delhi (DEL), Mumbai (BOM), Bengaluru (BLR), Chennai (MAA), Hyderabad (HYD), Kolkata (CCU), Kochi (COK), Ahmedabad (AMD), Goa (GOI), and Pune (PNQ). Handovers are coordinated near these arrival hubs or mutually agreed city meetup locations.",
+      "Portal supports primary international arrival airports across India: Delhi (DEL), Mumbai (BOM), Bengaluru (BLR), Chennai (MAA), Hyderabad (HYD), Kolkata (CCU), Kochi (COK), Ahmedabad (AMD), Goa (GOI), and Pune (PNQ). Physical handovers are coordinated near arrival terminals or agreed public city meetup spots.",
     keywords: ["airports", "cities", "delhi", "mumbai", "bangalore", "bengaluru", "chennai", "hubs", "locations"],
   },
 
@@ -130,34 +130,34 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "buyer",
     question: "How do I create a product request as a Buyer?",
     answer:
-      "Navigate to the Buyer Dashboard and select 'New Request'. Provide the product title, merchant web link, category, declared purchase value (in foreign currency or INR), desired destination airport, and urgency. Our system computes an indicative customs classification (HS Code) to verify compliance before making your request visible to matching travelers.",
+      "Navigate to the Buyer workspace and select 'New Request'. Provide the product title, merchant web link, category, declared purchase value (in foreign currency or INR), desired destination airport, and required delivery date. Our system assigns an indicative HS Code customs classification for compliance review before matching with eligible travelers.",
     keywords: ["create request", "order item", "buy", "product link", "new request"],
   },
   {
     id: "bg-2",
     categoryId: "buyer-guide",
     audience: "buyer",
-    question: "When is my payment charged and is my money safe?",
+    question: "How does payment protection and escrow hold work?",
     answer:
-      "Your money is held in a protected Escrow vault. When you accept a traveler's quote, you complete an upfront payment covering the product cost, carry reward, and estimated duty. Crucially, the traveler is NOT given your funds upfront. The payment remains locked in escrow until you meet the traveler in person, inspect your item, and provide your secret 6-digit Handover OTP.",
+      "When you accept a traveler's quote, an order is created in the ACCEPTED state. Once you authorize upfront payment (item cost, carrying fee, indicative duty, and platform fee), the payment intent transitions to CAPTURED, the order moves to LOCKED, and funds are allocated to an ESCROW_HOLD account on our append-only double-entry ledger. Funds remain locked in escrow and are never released to the traveler upfront.",
     keywords: ["escrow", "payment safety", "deposit", "money hold", "when charged", "protection"],
   },
   {
     id: "bg-3",
     categoryId: "buyer-guide",
     audience: "buyer",
-    question: "What is the Handover OTP and how does physical handover work?",
+    question: "What is the Handover OTP and how does physical delivery complete?",
     answer:
-      "Once the traveler lands in India and marks the order as LANDED, a unique 6-digit Handover OTP is generated on your Buyer order detail page. You meet the traveler at the agreed meetup location (such as airport arrivals or a public cafe), inspect the package and original store receipt, and only then disclose your OTP to the traveler. Once the traveler enters your OTP into their Portal app, the order transitions to DELIVERED and escrow payout is released.",
+      "When the traveler arrives in India and marks the order as LANDED, a unique 6-digit Handover OTP is generated on your Buyer order view. You meet the traveler at the agreed meetup location, inspect the item packaging and store receipt, and only then disclose your OTP to the traveler. When the traveler submits the OTP, cryptographic verification completes the handover, transitioning the order to COMPLETED and initiating settlement.",
     keywords: ["otp", "handover", "delivery code", "meetup", "inspect", "confirmation"],
   },
   {
     id: "bg-4",
     categoryId: "buyer-guide",
     audience: "buyer",
-    question: "What happens if a traveler cannot find or purchase my item?",
+    question: "What happens if a traveler cannot purchase my item?",
     answer:
-      "If a traveler is unable to purchase the item (for instance, if it goes out of stock at the destination store), they will update the order status. If an order cannot be fulfilled before departure, the locked escrow hold is automatically cancelled and released back to your original payment method in full.",
+      "If a traveler cannot fulfill the item abroad (e.g. out of stock), the traveler cancels the order prior to arrival while in LOCKED or PURCHASED state. Because payment was captured, an automated full refund is initiated, transitioning the order to CANCELLED and subsequently REFUNDED on the internal ledger.",
     keywords: ["out of stock", "unfulfilled", "refund", "cannot find", "cancelled order"],
   },
 
@@ -166,37 +166,37 @@ export const FAQ_ITEMS: FAQItem[] = [
     id: "tg-1",
     categoryId: "traveler-guide",
     audience: "traveler",
-    question: "How do I earn money carrying items as a Traveler?",
+    question: "How do I list trips and earn carrying fees as a Traveler?",
     answer:
-      "When planning an international trip to India, post your itinerary on Portal specifying your origin city/country, Indian arrival airport, flight date, and available baggage capacity (weight in kg and volume). Portal matches you with compatible buyer requests. You submit a quote with your requested carry reward. Once accepted, you purchase the item during your trip, carry it in your luggage, and receive your payout upon verified handover in India.",
+      "When traveling to India, post your flight itinerary specifying your origin city/country, Indian arrival airport, flight dates, and available spare luggage capacity (e.g. 2–8 kg). Portal matches you with compatible buyer requests. You submit a quote detailing item cost, your requested carrying fee, and indicative customs duty. Once accepted, you purchase the item during your journey and deliver it upon arrival.",
     keywords: ["earn money", "traveler earnings", "carry reward", "post trip", "baggage space"],
   },
   {
     id: "tg-2",
     categoryId: "traveler-guide",
     audience: "traveler",
-    question: "Do I have to buy the requested item with my own funds upfront?",
+    question: "Do travelers purchase items using their own funds upfront?",
     answer:
-      "Yes. To protect both parties and comply with international anti-fraud regulations, travelers purchase the item abroad with their own funds and upload proof of purchase (store receipt and item condition photos). The buyer's total payment is already safely pre-funded in Portal's Escrow vault before you make the purchase, guaranteeing that reimbursement plus your reward is waiting for you upon delivery.",
+      "Yes. Travelers purchase requested items abroad using their own funds and upload proof of purchase (merchant receipt and condition photos). The buyer's total upfront payment is already captured and held in ESCROW_HOLD before you buy, ensuring verified funds are reserved on the ledger for reimbursement and fees upon delivery.",
     keywords: ["upfront cost", "purchase item", "receipt", "store receipt", "reimbursement"],
   },
   {
     id: "tg-3",
     categoryId: "traveler-guide",
     audience: "traveler",
-    question: "How and when do I receive my traveler payout?",
+    question: "How and when is traveler payout processed?",
     answer:
-      "As soon as you enter the buyer's 6-digit Handover OTP at delivery, the transaction status moves to DELIVERED and the ledger initiates settlement. Payouts (including item cost reimbursement and your carry reward) are transferred directly to your registered bank account or UPI ID. In demo mode, simulated settlement is reflected instantly on your Traveler dashboard.",
+      "When you verify the buyer's 6-digit Handover OTP at delivery, the order transitions to COMPLETED. The internal ledger posts an ORDER_SETTLED journal transaction crediting your payable balance (item reimbursement plus carrying fee). In demo mode, settlement is posted strictly to the internal ledger without moving real banking funds; in production, payouts are disbursed via supported provider rails.",
     keywords: ["payout", "settlement", "bank transfer", "upi", "when paid", "receive earnings"],
   },
   {
     id: "tg-4",
     categoryId: "traveler-guide",
     audience: "traveler",
-    question: "What if a buyer does not show up for the agreed handover?",
+    question: "What happens if a buyer does not complete the handover?",
     answer:
-      "If a buyer fails to attend the scheduled handover after you have landed, Portal's support team assists in rescheduling. If the buyer is unreachable after multiple documented attempts, you can raise an escalation through your order page. Under Portal's dispute protocol, non-responsive buyer scenarios are reviewed by administrators to protect the traveler's investment.",
-    keywords: ["no show", "buyer absent", "handover issue", "escalation", "support"],
+      "If a buyer does not arrive for the scheduled handover within the permitted window after landing, the order enters exceptional handling. If the handover deadline expires without buyer verification, the order can transition to FORFEITED via scheduled background reconciliation, protecting the traveler's fulfillment investment.",
+    keywords: ["no show", "buyer absent", "handover issue", "escalation", "support", "forfeited"],
   },
 
   // 4. Trips and Product Requests
@@ -206,34 +206,34 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "general",
     question: "What items can be requested through Portal?",
     answer:
-      "Eligible items include consumer electronics, designer apparel, footwear, cosmetics, skincare, collectibles, specialty snacks, books, and lifestyle goods that fit within standard airline carry-on or checked baggage limits. All items must comply with Indian Central Board of Indirect Taxes and Customs (CBIC) passenger baggage regulations and Portal's safety policies.",
+      "Eligible items include consumer electronics, personal audio, designer apparel, cosmetics, specialty books, and lifestyle accessories for personal use that fit within standard airline carry-on or checked baggage allowances. Commercial-scale quantities, resale cargo, and goods violating Indian Customs passenger baggage rules are prohibited.",
     keywords: ["eligible items", "what can i buy", "products", "cosmetics", "electronics", "fashion"],
   },
   {
     id: "tr-2",
     categoryId: "trips-requests",
     audience: "general",
-    question: "Which origin countries are currently popular on Portal?",
+    question: "Which origin countries are supported on Portal?",
     answer:
-      "Portal supports travelers flying from major international shopping destinations, including the United States, United Kingdom, United Arab Emirates, Singapore, Japan, Germany, France, Canada, and Australia. Buyers can filter active traveler itineraries by origin country to match regional exclusives.",
-    keywords: ["origin countries", "united states", "usa", "uk", "dubai", "uae", "singapore", "japan"],
+      "Portal supports itineraries originating from 12 countries: Australia, France, Germany, Italy, Japan, Netherlands, Singapore, South Korea, Spain, United Arab Emirates, United Kingdom, and the United States. Requests can be matched with travelers departing from international airports within these regions.",
+    keywords: ["origin countries", "united states", "usa", "uk", "dubai", "uae", "singapore", "japan", "france", "germany"],
   },
   {
     id: "tr-3",
     categoryId: "trips-requests",
     audience: "general",
-    question: "What are HS Codes and why are they required on requests?",
+    question: "What are HS Codes and how are they used?",
     answer:
-      "Harmonized System (HS) Codes are standardized international customs codes used to classify traded goods. Portal automatically suggests or assigns the relevant HS code (e.g. HS 8517 for smartphones, HS 3304 for cosmetics) to estimate customs duties accurately and flag prohibited categories before any traveler commits to carrying the item.",
+      "Harmonized System (HS) Codes are standardized international customs codes used to classify imported items (e.g. HS 8517 for communications equipment, HS 3304 for cosmetics). Portal assigns an HS code to evaluate whether the item qualifies under passenger baggage rules and to compute an indicative duty assessment before matching.",
     keywords: ["hs code", "customs classification", "duty code", "tariff", "compliance"],
   },
   {
     id: "tr-4",
     categoryId: "trips-requests",
     audience: "traveler",
-    question: "How do luggage weight and dimension limits work?",
+    question: "How do luggage capacity limits work?",
     answer:
-      "When posting a trip, travelers declare their spare luggage capacity (e.g., up to 5 kg). Product requests specify estimated dimensions (small, medium, large) and weight. The Portal matching engine filters out requests that exceed a traveler's declared weight limit or requires bulky packaging.",
+      "When listing a trip, travelers declare their available spare baggage weight (typically between 2 kg and 10 kg). The matching engine filters requests based on declared item weights and dimensions so travelers are never matched with packages exceeding their declared spare luggage allowance.",
     keywords: ["baggage limit", "weight", "dimensions", "luggage space", "capacity"],
   },
 
@@ -244,35 +244,35 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "all",
     question: "How does Portal match buyers with travelers?",
     answer:
-      "Matching connects buyer requests with traveler trips based on three key parameters: origin country alignment, arrival airport proximity, and timeline compatibility (the traveler's arrival date must be on or before the buyer's required delivery date). Once a match is detected, travelers receive an alert to review the request and submit a quote.",
+      "Matching aligns approved, open buyer requests with active traveler trips based on origin country match, Indian destination airport proximity, and date compatibility (traveler arrival date on or before buyer's required delivery date). Matching requests only become visible to travelers after compliance review approval.",
     keywords: ["matching", "smart match", "algorithm", "itinerary match", "compatibility"],
   },
   {
     id: "qm-2",
     categoryId: "quotes-matching",
     audience: "all",
-    question: "What makes up a quote breakdown?",
+    question: "What are the components of a Quote?",
     answer:
-      "A complete Portal quote consists of three transparent components: 1) Item Purchase Price (converted to INR at live benchmark rates), 2) Traveler Carry Reward (the agreed service fee for transport), and 3) Estimated Customs & Handling (indicative duty allocation based on item category). Portal charges a minimal platform fee visible before checkout.",
+      "A Portal quote itemizes four transparent components: 1) Item Purchase Price (in foreign currency and converted to INR), 2) Traveler Carrying Fee, 3) Indicative Customs Duty (reviewed by compliance), and 4) Platform Service Fee. Together, these form the total upfront payment captured when the order enters LOCKED state.",
     keywords: ["quote breakdown", "pricing", "carry reward", "customs fee", "transparent fee"],
   },
   {
     id: "qm-3",
     categoryId: "quotes-matching",
     audience: "buyer",
-    question: "Can I receive quotes from multiple travelers for the same request?",
+    question: "Can a buyer receive multiple quotes for the same request?",
     answer:
-      "Yes! When your request is active, multiple verified travelers on matching routes can send competitive quotes. You can compare traveler ratings, total carry counts, flight arrival dates, and quoted rewards before selecting the best quote to accept.",
+      "Yes. Multiple verified travelers flying compatible routes can submit independent quotes for an open request. You can compare traveler ratings, total carries, flight arrival dates, and carrying fees before selecting a quote to accept.",
     keywords: ["multiple quotes", "compare travelers", "best price", "select traveler"],
   },
   {
     id: "qm-4",
     categoryId: "quotes-matching",
     audience: "traveler",
-    question: "Can a traveler withdraw or edit an open quote?",
+    question: "Can an active quote be withdrawn or expired?",
     answer:
-      "Travelers can retract or adjust an open quote at any time before the buyer accepts it and completes payment. Once a buyer accepts and enters the LOCKED order state, the quote terms are legally binding for both parties.",
-    keywords: ["edit quote", "cancel quote", "withdraw", "binding quote"],
+      "Travelers can withdraw an open quote anytime before a buyer accepts it. Additionally, quotes have validity deadlines; unaccepted quotes expire automatically. Once a buyer accepts a quote via accept_quote, the quote transitions to ACCEPTED and an order is created.",
+    keywords: ["edit quote", "cancel quote", "withdraw", "binding quote", "quote expiry"],
   },
 
   // 6. Payments and Orders
@@ -280,37 +280,37 @@ export const FAQ_ITEMS: FAQItem[] = [
     id: "po-1",
     categoryId: "payments-orders",
     audience: "all",
-    question: "What are the stages of an order lifecycle?",
+    question: "What is the canonical order lifecycle in Naresh's Order Engine?",
     answer:
-      "An order progresses through 7 transparent stages: 1) CREATED: Request posted; 2) ACCEPTED: Traveler quote accepted; 3) LOCKED: Buyer escrow deposit confirmed; 4) PURCHASED: Traveler bought the item and uploaded store receipt proof; 5) LANDED: Traveler arrived in India; 6) DELIVERED: Handover completed with verified OTP; 7) SETTLED: Escrow released to traveler's bank.",
-    keywords: ["order lifecycle", "stages", "locked", "purchased", "landed", "delivered", "settled"],
+      "The primary order lifecycle progresses through 5 linear states: ACCEPTED → LOCKED → PURCHASED → LANDED → COMPLETED.\n\n• ACCEPTED: Quote accepted by buyer; payment pending within payment deadline window.\n• LOCKED: Upfront payment captured; order locked and funds held in internal escrow.\n• PURCHASED: Traveler confirmed item purchase abroad and uploaded store receipt proof.\n• LANDED: Traveler arrived in India awaiting in-person handover.\n• COMPLETED: Handover confirmed via 6-digit OTP verification; settlement ledger posted.\n\nIn addition, the state machine enforces separate exceptional states: DISPUTED (mediation hold), CANCELLED, REFUNDED (financial reversal posted), EXPIRED (payment window elapsed in ACCEPTED), and FORFEITED (handover deadline elapsed in LANDED).",
+    keywords: ["order lifecycle", "stages", "accepted", "locked", "purchased", "landed", "completed", "state machine", "order engine"],
   },
   {
     id: "po-2",
     categoryId: "payments-orders",
     audience: "all",
-    question: "How does the Portal financial ledger guarantee integrity?",
+    question: "How do payment statuses differ from order states?",
     answer:
-      "Portal operates an append-only double-entry ledger. Every financial transition—from escrow deposit to platform fee allocation and payout settlement—creates immutable debit and credit entries. Ledger records cannot be altered or deleted, ensuring complete mathematical balance and fraud protection.",
-    keywords: ["ledger", "double entry", "accounting", "immutable", "audit trail", "financial integrity"],
+      "Payment statuses track the lifecycle of the financial intent through the payment provider and are kept strictly distinct from order states. A Payment Intent progresses through CREATING → CREATED → AUTHORIZED → CAPTURED, or FAILED / REFUNDED. In order tracking, payment state is summarized as PENDING, CAPTURED, FAILED, REFUNDED, or NONE. An order only moves from ACCEPTED to LOCKED once its payment intent status is confirmed as CAPTURED.",
+    keywords: ["payment intent", "payment status", "captured", "authorized", "refunded", "order state difference"],
   },
   {
     id: "po-3",
     categoryId: "payments-orders",
-    audience: "buyer",
-    question: "What payment methods are supported for escrow deposits?",
+    audience: "all",
+    question: "How does the internal double-entry ledger operate?",
     answer:
-      "In live mode, Portal supports payments via UPI, major credit/debit cards (Visa, Mastercard, RuPay), and Netbanking through our PCI-DSS compliant payment infrastructure. In demo mode, instant simulated payment authorization is provided without entering real card credentials.",
-    keywords: ["payment methods", "upi", "credit card", "debit card", "netbanking", "razorpay"],
+      "Portal uses an immutable, append-only double-entry financial ledger (post_ledger_transaction). Every financial transition requires balanced debits and credits: on LOCKED, funds move from PAYMENT_CLEARING to ESCROW_HOLD; on COMPLETED, escrow moves to TRAVELLER_PAYABLE, DUTY_PAYABLE, and PLATFORM_REVENUE; on refund, balanced reversal entries are posted. Historical ledger records can never be modified or deleted.",
+    keywords: ["ledger", "double entry", "accounting", "immutable", "audit trail", "financial integrity"],
   },
   {
     id: "po-4",
     categoryId: "payments-orders",
     audience: "all",
-    question: "How do cancellations work and when are refunds issued?",
+    question: "What are the cancellation and refund rules by order state?",
     answer:
-      "Cancellations depend on order stage. Buyers can cancel freely with a 100% refund while an order is in ACCEPTED status (before payment locking). If an order is LOCKED but the traveler has not yet purchased the item, cancellation requires mutual consent or trip date expiration. Once an item is marked PURCHASED with verified receipts, cancellation is restricted to protect the traveler.",
-    keywords: ["cancellation", "refund policy", "refund timeline", "cancel order"],
+      "Cancellation eligibility strictly adheres to state machine rules:\n\n• ACCEPTED: The buyer may cancel before payment capture; no refund is required, transitioning order to CANCELLED.\n• LOCKED: Buyer or traveler may cancel; because payment was captured, an automated refund is required, transitioning the order to CANCELLED then REFUNDED.\n• PURCHASED: Only the traveler may cancel before landing (e.g. store stock unavailable), which triggers a full buyer refund. Buyers cannot unilaterally cancel once purchase is confirmed.\n• LANDED & COMPLETED: Cancellation is not permitted. If issues occur at handover, participants raise a dispute.\n• DISPUTED: Cancellations and refunds are blocked until formal dispute resolution.",
+    keywords: ["cancellation", "refund policy", "refund timeline", "cancel order", "eligibility"],
   },
 
   // 7. Account and Verification
@@ -318,36 +318,36 @@ export const FAQ_ITEMS: FAQItem[] = [
     id: "av-1",
     categoryId: "account-verification",
     audience: "traveler",
-    question: "What verification is required for Travelers before carrying items?",
+    question: "What verification is required for Travelers before quoting?",
     answer:
-      "To ensure community safety, travelers must complete identity verification. This includes valid government passport KYC verification, mobile phone OTP confirmation, and flight ticket itinerary verification. In demo mode, travelers are marked with 'Mock passport KYC · demo' for sandbox testing.",
+      "Travelers must complete identity verification before their trips can be activated and before they can submit quotes. This includes passport KYC review, mobile phone verification, and itinerary validation. In demo mode, accounts feature simulated KYC submissions for safe offline walkthroughs.",
     keywords: ["traveler verification", "kyc", "passport", "identity check", "trust badge"],
   },
   {
     id: "av-2",
     categoryId: "account-verification",
     audience: "all",
-    question: "How does Portal protect my personal and contact details?",
+    question: "How does Portal handle user privacy and contact details?",
     answer:
-      "Personal contact details (such as your private phone number and home address) are never publicly exposed. Buyers and travelers coordinate order specifics via Portal's in-app messaging. Meetup locations for handovers are arranged at designated public transit hubs or airport arrival gates.",
+      "Personal contact details such as direct telephone numbers and private home addresses are protected and not displayed across public marketplace listings. Communication and handover arrangements occur through Portal's in-app messaging, and phone numbers in administrative logs are masked for privacy.",
     keywords: ["privacy", "phone number", "personal data", "security", "anonymity"],
   },
   {
     id: "av-3",
     categoryId: "account-verification",
     audience: "all",
-    question: "How do traveler tiers and ratings work?",
+    question: "How do traveler reputation ratings and carries work?",
     answer:
-      "Travelers build a public reputation score (1 to 5 stars) and carry count badge based on verified handovers completed. Profiles display member join dates, verified languages, badges (such as 'Founding Traveler' or 'Super Traveler'), and buyer review ratings.",
+      "Traveler profiles display verifiable platform milestones: total completed carries, average review rating, founding traveler tier badges, member join dates, and verified origin routes. Metrics update only when handovers reach COMPLETED status via OTP verification.",
     keywords: ["rating", "reputation", "tiers", "reviews", "founding traveler", "stars"],
   },
   {
     id: "av-4",
     categoryId: "account-verification",
     audience: "all",
-    question: "What should I do if I cannot log into my account?",
+    question: "How does authentication work on Portal?",
     answer:
-      "Portal uses passwordless magic-link and OTP phone verification. Ensure you check your spam folder for login links or request a fresh SMS OTP. If your phone number has changed, contact our support team through the Help Center for manual identity recovery.",
+      "Portal uses passwordless magic-link and OTP phone authentication. If you encounter sign-in issues, check your spam folder for login links or request a fresh OTP SMS. If your contact information changes, administrators can update your verified profile records.",
     keywords: ["login issue", "magic link", "otp login", "account recovery", "cannot log in"],
   },
 
@@ -358,35 +358,34 @@ export const FAQ_ITEMS: FAQItem[] = [
     audience: "all",
     question: "What items are strictly prohibited on Portal?",
     answer:
-      "Portal strictly prohibits illegal substances, narcotics, prescription pharmaceuticals, firearms, ammunition, hazardous chemicals, flammable materials, currency, precious bullion, counterfeit goods, commercial-scale merchandise, and any goods barred by Indian Customs (CBIC) or international aviation safety authorities. All requests undergo automated keyword filtering and manual compliance checks.",
+      "Portal strictly prohibits illegal substances, prescription medicines, firearms, ammunition, hazardous chemicals, flammable items, currency, bullion, counterfeit goods, commercial-scale inventory, and third-party commercial shipments under passenger baggage. Product requests are screened automatically and reviewed by compliance reviewers before matching is enabled.",
     keywords: ["prohibited items", "banned items", "customs rules", "illegal", "safety policy"],
   },
   {
     id: "sp-2",
     categoryId: "safety-policies",
     audience: "all",
-    question: "How does Portal handle Indian Customs duties and allowances?",
+    question: "What are Portal's customs duty and baggage policies?",
     answer:
-      "Indian Customs allows bona fide international travelers a duty-free baggage allowance for personal used effects and gifts up to statutory limits. For dutiable commercial items, estimated duties are calculated in advance and included in the buyer's escrow deposit. Travelers declare items at the Red Channel if duties apply and retain official customs payment receipts for reimbursement.",
+      "Portal is a technology platform connecting individual travelers and buyers; it does not sell, ship, import goods, or provide legal or tax advice. Duty estimates on quotes are indicative only. International travelers are responsible for declaring dutiable personal baggage at the customs Red Channel in accordance with Indian Customs (CBIC) passenger baggage regulations.",
     keywords: ["customs duty", "baggage allowance", "cbic", "red channel", "customs declaration", "taxes"],
   },
   {
     id: "sp-3",
     categoryId: "safety-policies",
     audience: "all",
-    question: "What happens if an item is damaged or the wrong product is delivered?",
+    question: "What should I do if an item is damaged or incorrect at handover?",
     answer:
-      "Buyers must inspect the item in person at the meetup before sharing their Handover OTP. If the item is damaged, opened, or incorrect, DO NOT share your OTP. Raise a dispute immediately via your Portal order page. Submitting a dispute freezes automatic escrow settlement and alerts our dispute management team for mediation.",
+      "Inspect the package and merchant store receipt in person at the meetup BEFORE sharing your 6-digit Handover OTP. If the item is missing, damaged, or incorrect, DO NOT share your OTP. Raise a dispute immediately via your order page. Transitioning to DISPUTED freezes settlement and alerts the dispute management team for mediation.",
     keywords: ["dispute", "damaged item", "wrong item", "do not share otp", "chargeback", "mediation"],
   },
   {
     id: "sp-4",
     categoryId: "safety-policies",
     audience: "all",
-    question: "How are disputes resolved and what evidence is required?",
+    question: "How does the Payment Dispute and Chargeback Engine work?",
     answer:
-      "When a dispute is logged (entering CREATED or UNDER_REVIEW status), both parties upload evidence—including merchant purchase receipts, packaging unboxing photos, and message logs—to our secure private storage. Admin mediators evaluate the evidence against our fair marketplace policy. Payouts and refunds are only released after a confirmed resolution.",
+      "When a dispute is initiated (DISPUTED state), automatic settlement is paused, and conflicting refunds are blocked. Participants upload evidence (store receipts, condition photos, unboxing proof) to private storage. Mediators review the timeline and financial impact. If a dispute is won or lost, balanced ledger reversals are posted without altering historical journal entries.",
     keywords: ["dispute resolution", "evidence", "receipts", "photos", "chargeback engine", "refund conflict"],
   },
 ];
-

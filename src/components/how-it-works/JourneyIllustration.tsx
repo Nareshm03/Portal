@@ -35,7 +35,7 @@ const JOURNEY_STEPS = [
   },
 ];
 
-export interface JourneyIllustrationProps {}
+export type JourneyIllustrationProps = Record<string, never>;
 
 export function JourneyIllustration() {
   return (

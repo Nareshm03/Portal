@@ -55,11 +55,11 @@ export interface TravelerProfile {
   phone: string;
   baseCity: string;
   baseCountry: string;
-<<<<<<< HEAD
-  homeAirport: AirportCode | string;
-=======
+<<<<<<< Updated upstream
   homeAirport: string;
->>>>>>> 639ace2a0b38194c85169b31729a1f643432c530
+=======
+  homeAirport: AirportCode;
+>>>>>>> Stashed changes
   memberSince: string;
   tier: string;
   verification: string;
