@@ -7,77 +7,55 @@ import Link from "next/link";
 import {
   ArrowRight,
   ArrowUpRight,
-  CalendarDays,
+  ClipboardList,
   Globe2,
+  MessagesSquare,
+  PackageCheck,
   Plane,
   Plus,
-  ShieldCheck,
+  ReceiptText,
   Sparkles,
 } from "lucide-react";
 import { BuyerShell } from "@/components/buyer/buyer-shell";
-import { Badge, ButtonLink, SectionHeading } from "@/components/ui";
-import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createApiClient } from "@/lib/api/client";
-import { getBuyerProfile, requireBuyerSession } from "@/lib/auth/buyer";
-import type { Profile } from "@/lib/auth/types";
-import { formatCurrency, formatDate } from "@/lib/demo/buyer";
-import { cn } from "@/lib/utils";
+import { Badge, ButtonLink } from "@/components/ui";
+import {
+  buyerHeroImage,
+  buyerProfile,
+  buyerSnapshot,
+} from "@/lib/demo/buyer";
 
 export const metadata: Metadata = { title: "Buyer dashboard" };
 
-interface BackendRequest {
-  id: string;
-  buyer_id: string;
-  origin_country: string;
-  origin_airport_code: string;
-  destination_country: string;
-  destination_airport_code: string;
-  needed_by: string;
-  product_title: string;
-  product_category: string;
-  product_url: string | null;
-  quantity: number;
-  declared_value_minor: number | null;
-  declared_currency: string | null;
-  hs_code: string | null;
-  fulfilment_mode: string;
-  is_for_third_party: boolean;
-  compliance_status: string;
-  compliance_reason: string[];
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export default async function BuyerDashboardPage() {
-  // Ensure the buyer is authenticated and active on the backend.
-  const session = await requireBuyerSession();
-  const supabase = createServerClient();
-
-  // Fetch the authoritative buyer profile from the backend.
-  const profileResult = await getBuyerProfile(supabase);
-
-  // Fetch the buyer's requests from the backend using the access token.
-  let requests: BackendRequest[] = [];
-  let requestsError: string | null = null;
-  let isLoadingRequests = true;
-
-  try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token ?? null;
-    const api = createApiClient();
-    const data = (await api.GET("/requests/mine", { token })) as BackendRequest[];
-    requests = Array.isArray(data) ? data : [];
-  } catch (err) {
-    requestsError =
-      err instanceof Error ? err.message : "Failed to load requests.";
-  } finally {
-    isLoadingRequests = false;
-  }
-
-  const profile: Profile | null = profileResult.ok && profileResult.profile ? profileResult.profile : null;
-
-  const firstName = profile?.full_name ? profile.full_name.split(" ")[0] : "Buyer";
+const STATS = [
+  {
+    label: "Active requests",
+    value: buyerSnapshot.activeRequests,
+    note: "Tokyo · Paris · Amsterdam",
+    href: "/buyer/requests",
+    icon: ClipboardList,
+  },
+  {
+    label: "Matched travelers",
+    value: buyerSnapshot.matchedTravelers,
+    note: "Verified demo profiles",
+    href: "/buyer/travelers",
+    icon: Plane,
+  },
+  {
+    label: "Quotes to review",
+    value: buyerSnapshot.quotesToReview,
+    note: "One flagged best value",
+    href: "/buyer/quotes",
+    icon: ReceiptText,
+  },
+  {
+    label: "In motion",
+    value: buyerSnapshot.inTransit,
+    note: "One flying · one at customs",
+    href: "/buyer/orders",
+    icon: PackageCheck,
+  },
+] as const;
 
   return (
     <BuyerShell active="overview">
@@ -167,6 +145,12 @@ export default async function BuyerDashboardPage() {
                 >
                   Create a product request
                 </ButtonLink>
+                <Link
+                  href="/buyer/requests"
+                  className="text-sm font-medium text-ivory/65 underline-offset-4 transition-colors hover:text-champagne hover:underline"
+                >
+                  Review active requests
+                </Link>
               </div>
             </div>
 
@@ -178,10 +162,6 @@ export default async function BuyerDashboardPage() {
               <span className="inline-flex items-center gap-1.5">
                 <Plane className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
                 Traveler network
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <ShieldCheck className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
-                Compliance reviewed
               </span>
             </div>
           </div>
@@ -230,132 +210,90 @@ export default async function BuyerDashboardPage() {
               </div>
             </dl>
 
-            {profile && (
-              <p className="mt-5 rounded-lg border border-champagne-strong/25 bg-champagne/10 p-3 text-[0.6875rem] leading-relaxed text-muted">
-                <span className="font-medium text-burgundy">Account status:</span>{" "}
-                {profile.account_status}{" "}
-                <span className="font-medium text-burgundy">KYC:</span>{" "}
-                {profile.kyc_status}
-              </p>
-            )}
+            <p className="mt-5 rounded-lg border border-champagne-strong/25 bg-champagne/10 p-3 text-[0.6875rem] leading-relaxed text-muted">
+              <span className="font-medium text-burgundy">
+                {buyerSnapshot.quotesToReview} quotes
+              </span>{" "}
+              are waiting for a decision. Use the sidebar to explore requests,
+              travelers, and active orders.
+            </p>
           </div>
         </aside>
       </div>
 
-      {/* ── Active product requests ────────────────────────────────────── */}
-      <section id="requests" className="mt-14 scroll-mt-28">
-        <SectionHeading
-          eyebrow="Sourcing pipeline"
-          title="Active product requests"
-          description="Your requests, with live status and compliance from the backend."
-          actions={
-            <ButtonLink
-              href="/buyer/requests/new"
-              variant="outline"
-              size="sm"
-              leadingIcon={
-                <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-              }
-            >
-              New request
-            </ButtonLink>
-          }
-        />
+      {/* ── Quick links ─────────────────────────────────────────────────── */}
+      <section className="mt-14">
+        <div className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+          <div>
+            <p className="eyebrow">Workspace navigation</p>
+            <h2 className="mt-2 text-2xl">Explore your Buyer workspace</h2>
+            <p className="mt-2 text-sm text-muted">
+              Use the sidebar or quick links below to navigate to specific
+              sections.
+            </p>
+          </div>
 
-        {isLoadingRequests ? (
-          <div className="mt-6 flex items-center justify-center py-20">
-            <p className="text-muted">Loading requests…</p>
-          </div>
-        ) : requestsError ? (
-          <div className="mt-6 rounded-xl border border-red-600/20 bg-red-600/10 p-6 text-sm text-red-700">
-            <p>Failed to load requests: {requestsError}</p>
-            <ButtonLink
-              href="/buyer/dashboard"
-              variant="outline"
-              size="sm"
-            >
-              Retry
-            </ButtonLink>
-          </div>
-        ) : requests.length === 0 ? (
-          <div className="mt-6 rounded-xl border border-border bg-surface p-12 text-center">
-            <p className="text-muted">No requests yet.</p>
-            <ButtonLink href="/buyer/requests/new" size="sm">
-              Create your first request
-            </ButtonLink>
-          </div>
-        ) : (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-surface">
-            {requests.map((request, index) => (
-              <article
-                key={request.id}
-                className={cn(
-                  "group grid gap-5 p-5 transition-colors hover:bg-surface-muted/30 sm:grid-cols-[6.5rem_minmax(0,1fr)_auto] sm:items-center",
-                  index !== requests.length - 1 && "border-b border-border",
-                )}
-              >
-                <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-surface-muted sm:size-[6.5rem]">
-                  <Image
-                    src="https://images.unsplash.com/photo-1516035069371-29a1b244cc32?auto=format&fit=crop&w=800&q=80"
-                    alt={request.product_title}
-                    fill
-                    sizes="104px"
-                    className="object-cover transition-transform duration-700 group-hover:scale-105"
-                  />
-                  <span className="absolute left-2 top-2 rounded-full bg-burgundy-deep/80 px-1.5 py-0.5 text-[0.5rem] font-semibold uppercase tracking-[0.14em] text-champagne">
-                    Live
-                  </span>
-                </div>
-
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="text-xs">
-                      {request.status}
-                    </Badge>
-                    <span className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                      Request {request.id.slice(0, 8).toUpperCase()}
-                    </span>
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {STATS.map((stat) => {
+              const Icon = stat.icon;
+              return (
+                <Link
+                  key={stat.label}
+                  href={stat.href}
+                  className="group rounded-xl border border-border bg-surface-muted/40 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-champagne-strong/60 hover:bg-surface hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between">
+                    <Icon
+                      className="size-5 text-champagne-strong transition-transform group-hover:scale-110"
+                      strokeWidth={1.75}
+                      aria-hidden="true"
+                    />
+                    <ArrowUpRight
+                      className="size-4 text-muted transition-colors group-hover:text-burgundy"
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
                   </div>
-
-                  <h3 className="mt-2 text-xl">{request.product_title}</h3>
-
-                  <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
-                    <span>{request.origin_country}</span>
-                    <ArrowRight className="size-3.5 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
-                    <span>{request.destination_country}</span>
+                  <p className="mt-4 font-medium text-foreground">
+                    {stat.label}
                   </p>
-
-                  <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
-                    <span>
-                      <strong className="font-medium text-foreground">
-                        {request.declared_value_minor != null
-                          ? formatCurrency(request.declared_value_minor / 100, request.declared_currency ?? "USD")
-                          : "Budget not set"}
-                      </strong>{" "}
-                      budget
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <CalendarDays className="size-3.5 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
-                      Needed {formatDate(request.needed_by.replace(" ", "T"))}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="sm:min-w-32 sm:text-right">
-                  <p className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Compliance
+                  <p className="mt-1 text-xs text-muted">{stat.note}</p>
+                  <p className="mt-3 font-serif text-2xl text-burgundy">
+                    {String(stat.value).padStart(2, "0")}
                   </p>
-                  <p className="mt-1 font-serif text-2xl text-burgundy">
-                    {request.compliance_status}
-                  </p>
-                  <p className="mt-1 text-[0.625rem] text-muted">
-                    Order status: {request.status}
-                  </p>
-                </div>
-              </article>
-            ))}
+                </Link>
+              );
+            })}
           </div>
-        )}
+
+          <div className="mt-6 flex items-center gap-4 border-t border-border pt-6">
+            <MessagesSquare
+              className="size-5 text-champagne-strong"
+              strokeWidth={1.75}
+              aria-hidden="true"
+            />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">
+                {buyerSnapshot.unreadMessages} unread message
+                {buyerSnapshot.unreadMessages === 1 ? "" : "s"}
+              </p>
+              <p className="mt-0.5 text-xs text-muted">
+                Updates from travelers carrying your orders
+              </p>
+            </div>
+            <Link
+              href="/buyer/messages"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-burgundy transition-colors hover:text-burgundy-deep"
+            >
+              View messages
+              <ArrowRight
+                className="size-4"
+                strokeWidth={1.75}
+                aria-hidden="true"
+              />
+            </Link>
+          </div>
+        </div>
       </section>
     </BuyerShell>
   );

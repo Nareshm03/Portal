@@ -1,22 +1,21 @@
-import { createBrowserClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 
-/**
- * Browser Supabase client.
- *
- * Used in client components and event handlers. Reads only the public
- * Next.js env vars (NEXT_PUBLIC_SUPABASE_URL /
- * NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY). Never touches the service-role key.
- */
-export function createClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error(
-      'Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY. ' +
-        'Create .env.local from the Supabase project public keys.'
-    );
-  }
-
-  return createBrowserClient(supabaseUrl, supabaseKey);
-}
+// Only create client in browser environment with valid credentials
+// This prevents build-time errors when env vars are not available
+export const supabase = 
+  typeof window !== 'undefined' && supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+        },
+        realtime: {
+          params: {
+            eventsPerSecond: 10,
+          },
+        },
+      })
+    : null;

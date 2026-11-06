@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard, LogIn, UserPlus } from "lucide-react";
+import { LogIn, UserPlus } from "lucide-react";
 import { PortalMark } from "@/components/shared/portal-mark";
 import { WorkspaceTheme } from "@/components/ui";
 import { WORKSPACES } from "@/lib/workspaces";
@@ -49,17 +49,6 @@ export function BuyerAuthShell({
                 Register
               </Link>
             )}
-            <Link
-              href={workspace.dashboardPath}
-              className="inline-flex items-center gap-1.5 rounded-md border border-gold/40 px-3 py-1.5 font-medium text-gold transition-colors hover:border-gold hover:bg-gold/10"
-            >
-              <LayoutDashboard
-                className="size-4"
-                strokeWidth={1.75}
-                aria-hidden="true"
-              />
-              Dashboard
-            </Link>
           </nav>
         </div>
       </header>
