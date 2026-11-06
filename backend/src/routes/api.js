@@ -7,7 +7,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 import { HttpError } from '../utils/httpError.js';
 import { evaluateRequest, assertRequestMatchable } from '../services/duty.js';
 import { getConfiguredRate, convertMinorUnits } from '../services/fx.js';
-import { calculateOrderBreakdown } from '../services/money.js';
+import { calculateOrderBreakdown, calculateBreakdown, assertSafeMinorUnits } from '../services/money.js';
 import { assertTransition, buildTrackingInfo, buildPaymentSummary } from '../services/stateMachine.js';
 import { createRazorpayOrder, verifyCheckoutSignature, fetchRazorpayPayment } from '../services/razorpay.js';
 import { generateOtp, hashOtp, verifyOtp } from '../services/otp.js';
@@ -32,6 +32,7 @@ import {
   buildDisputeEvent,
 } from '../services/disputes.js';
 import { logger } from '../config/logger.js';
+import { matchesTripToRequest } from '../services/matching.js';
 
 export const apiRouter = Router();
 const supabase = () => getSupabase();
@@ -72,46 +73,21 @@ const quoteSchema = z.object({
   tripId: z.string().uuid(),
   itemPriceMinor: z.number().int().positive().safe(),
   itemCurrency: currencyCode,
-  // A separate reward the traveller chooses for the haul; frozen verbatim on acceptance. No reward formula is inferred.
-  travellerRewardPaise: z.number().int().nonnegative().safe(),
   // Duty cannot be user-guessed; this field is intentionally omitted from traveler input.
   note: z.string().max(500).optional()
 });
 
 apiRouter.get('/health', (_req, res) => res.json({ status: 'ok', service: 'portal-api', time: new Date().toISOString() }));
-apiRouter.get('/config', (_req, res) => {
-  // Determine payment mode configuration
-  const razorpayTestModeAvailable = !!(env.RAZORPAY_TEST_KEY_ID && env.RAZORPAY_TEST_KEY_SECRET);
-  const razorpayLiveModeAvailable = !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
-  const usingRazorpayTestMode = env.RAZORPAY_USE_TEST_MODE === 'true' && razorpayTestModeAvailable;
-  
-  let paymentMode = 'MOCK';
-  if (env.PAYMENTS_ENABLED && !env.MOCK_PAYMENTS) {
-    if (usingRazorpayTestMode) {
-      paymentMode = 'RAZORPAY_TEST';
-    } else if (razorpayLiveModeAvailable) {
-      paymentMode = 'RAZORPAY_LIVE';
-    }
-  }
-  
-  res.json({
-    currency: 'INR', 
-    supportedQuoteCurrencies: ['INR', ...Object.entries(env.fxRateTable).filter(([, pairs]) => typeof pairs?.INR === 'string').map(([code]) => code).sort()],
-    mockPayments: env.MOCK_PAYMENTS, 
-    paymentsEnabled: env.PAYMENTS_ENABLED,
-    realPaymentsEnabled: env.PAYMENTS_ENABLED && !env.MOCK_PAYMENTS,
-    razorpayTestModeAvailable,
-    razorpayLiveModeAvailable,
-    usingRazorpayTestMode,
-    paymentMode,
-    complianceApprovalRequired: true
-  });
-});
+apiRouter.get('/config', (_req, res) => res.json({
+  currency: 'INR', supportedQuoteCurrencies: ['INR', ...Object.entries(env.fxRateTable).filter(([, pairs]) => typeof pairs?.INR === 'string').map(([code]) => code).sort()],
+  mockPayments: env.MOCK_PAYMENTS, realPaymentsEnabled: env.PAYMENTS_ENABLED && !env.MOCK_PAYMENTS,
+  complianceApprovalRequired: true
+}));
 
 
 apiRouter.get('/fx/convert', requireAuth, async (req, res) => {
   const query = z.object({ amountMinor: z.coerce.number().int().nonnegative().safe(), from: currencyCode }).parse(req.query);
-  const rate = await getConfiguredRate(query.from, 'INR');
+  const rate = getConfiguredRate(query.from, 'INR');
   const result = convertMinorUnits({ amountMinor: query.amountMinor, fromCurrency: query.from, toCurrency: 'INR', ...rate });
   res.json({ data: { ...result, amountMinorInput: query.amountMinor, fromCurrency: query.from, note: 'Indicative server-configured rate. Not a foreign-exchange transaction or remittance quote.' } });
 });
@@ -193,12 +169,7 @@ apiRouter.get('/requests', requireAuth, requireRole('traveller'), async (req, re
   if (!trips?.length) return res.json({ data: [] });
   const { data: requests, error } = await supabase().from('requests').select('*').eq('status', 'OPEN').eq('compliance_status', 'APPROVED').gte('needed_by', new Date().toISOString()).limit(200);
   if (error) throw error;
-  const matches = requests.filter((request) => trips.some((trip) =>
-    trip.origin_airport_code === request.origin_airport_code &&
-    trip.destination_airport_code === request.destination_airport_code &&
-    new Date(trip.departure_at) <= new Date(request.needed_by) && new Date(trip.arrival_at) <= new Date(request.needed_by) &&
-    trip.origin_country === request.origin_country && trip.destination_country === request.destination_country
-  ));
+  const matches = requests.filter((request) => trips.some((trip) => matchesTripToRequest(trip, request)));
   res.json({ data: matches });
 });
 
@@ -212,14 +183,14 @@ apiRouter.post('/requests/:id/quotes', requireAuth, requireRole('traveller'), as
   if (request.status !== 'OPEN') throw new HttpError(409, 'REQUEST_NOT_OPEN', 'This request is not open for quotes.');
   const { data: trip, error: tripError } = await supabase().from('trips').select('*').eq('id', body.tripId).eq('traveller_id', req.user.id).eq('status', 'ACTIVE').single();
   if (tripError || !trip) throw new HttpError(404, 'ACTIVE_TRIP_REQUIRED', 'An active matching trip was not found.');
-  const matches = trip.origin_airport_code === request.origin_airport_code && trip.destination_airport_code === request.destination_airport_code && trip.origin_country === request.origin_country && trip.destination_country === request.destination_country && new Date(trip.departure_at) <= new Date(request.needed_by) && new Date(trip.arrival_at) <= new Date(request.needed_by);
+  const matches = matchesTripToRequest(trip, request);
   if (!matches) throw new HttpError(409, 'TRIP_ROUTE_MISMATCH', 'This trip does not match the request route and date.');
-  const fx = await getConfiguredRate(body.itemCurrency);
+  const fx = getConfiguredRate(body.itemCurrency);
   const converted = convertMinorUnits({ amountMinor: body.itemPriceMinor, fromCurrency: body.itemCurrency, toCurrency: 'INR', ...fx });
   const expiresAt = new Date(Date.now() + env.QUOTE_TTL_MINUTES * 60_000).toISOString();
   const { data, error } = await supabase().from('quotes').insert({
     request_id: requestId, trip_id: body.tripId, traveller_id: req.user.id,
-    item_price_minor: body.itemPriceMinor, item_currency: body.itemCurrency, traveller_reward_paise: body.travellerRewardPaise,
+    item_price_minor: body.itemPriceMinor, item_currency: body.itemCurrency,
     fx_rate: fx.rate, fx_source: fx.source, fx_timestamp: fx.rateTimestamp,
     indicative_duty_paise: null, duty_source: null, duty_reviewed_by: null, duty_reviewed_at: null, duty_assessment_reference: null,
     note: body.note ?? null, platform_fee_bps: env.PLATFORM_FEE_BPS,
@@ -251,24 +222,14 @@ apiRouter.post('/quotes/:id/accept', requireAuth, requireRole('buyer'), async (r
   if (!request || request.buyer_id !== req.user.id) throw new HttpError(404, 'QUOTE_NOT_FOUND', 'Quote not found.');
   assertRequestMatchable(request);
   if (quote.status !== 'ACTIVE' || new Date(quote.expires_at) <= new Date()) throw new HttpError(409, 'QUOTE_EXPIRED', 'This quote is no longer active.');
-  if (quote.indicative_duty_paise === null ||
-      !quote.duty_source?.trim() ||
-      !quote.duty_reviewed_by ||
-      !quote.duty_reviewed_at ||
-      !quote.duty_assessment_reference?.trim()) {
-    throw new HttpError(409, 'DUTY_REVIEW_REQUIRED', 'A completed compliance duty review (amount, source, reviewer and assessment reference) is required before acceptance.');
-  }
+  if (quote.indicative_duty_paise === null) throw new HttpError(409, 'DUTY_REVIEW_REQUIRED', 'A compliance-approved duty estimate is required before acceptance.');
   const converted = convertMinorUnits({
     amountMinor: Number(quote.item_price_minor), fromCurrency: quote.item_currency, toCurrency: 'INR',
     rate: String(quote.fx_rate), source: quote.fx_source, rateTimestamp: quote.fx_timestamp
   });
-  const breakdown = calculateOrderBreakdown({
-    productCostPaise: converted.amountMinor,
-    dutyPaise: Number(quote.indicative_duty_paise),
-    travellerRewardPaise: Number(quote.traveller_reward_paise),
-    platformFeeBps: Number(quote.platform_fee_bps),
-    depositBps: env.BUYER_DEPOSIT_BPS
-  });
+  const subtotalPaise = converted.amountMinor + Number(quote.indicative_duty_paise);
+  assertSafeMinorUnits(subtotalPaise, 'subtotalPaise');
+  const breakdown = calculateBreakdown(subtotalPaise, quote.platform_fee_bps, env.BUYER_DEPOSIT_BPS);
   const { data: orderId, error } = await supabase().rpc('accept_quote', {
     p_quote_id: quoteId,
     p_buyer_id: req.user.id,
@@ -276,10 +237,6 @@ apiRouter.post('/quotes/:id/accept', requireAuth, requireRole('buyer'), async (r
     p_platform_fee_paise: breakdown.platformFeePaise,
     p_total_paise: breakdown.totalPaise,
     p_deposit_paise: breakdown.depositPaise,
-    p_duty_paise: breakdown.dutyPaise,
-    p_traveller_reward_paise: breakdown.travellerRewardPaise,
-    p_upfront_paise: breakdown.upfrontPaise,
-    p_balance_paise: breakdown.balancePaise,
     p_payment_deadline: new Date(Date.now() + env.ORDER_PAYMENT_TTL_MINUTES * 60_000).toISOString()
   });
   if (error) throw new HttpError(409, 'QUOTE_ACCEPT_FAILED', 'The quote could not be accepted. It may have been taken or changed.', { cause: error.message });
@@ -299,24 +256,18 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
   const { data: existing } = await supabase().from('payment_intents').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
   if (existing) {
     if (existing.order_id !== order.id || existing.buyer_id !== req.user.id) throw new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', 'This idempotency key is already bound to another operation.');
-    return res.json({ data: { id: existing.id, provider: existing.provider, providerOrderId: existing.provider_order_id, amountPaise: existing.amount_paise, status: existing.status, mock: existing.provider === 'MOCK' }, duplicate: true });
+    return res.json({ data: { id: existing.id, provider: existing.provider, providerOrderId: existing.provider_order_id, amountPaise: existing.amount_paise, status: existing.status, mock: existing.provider === 'MOCK' } });
   }
 
-  // Determine provider based on configuration
-  let provider;
-  if (env.MOCK_PAYMENTS) {
-    provider = 'MOCK';
-  } else if (env.RAZORPAY_USE_TEST_MODE === 'true' && (env.RAZORPAY_TEST_KEY_ID && env.RAZORPAY_TEST_KEY_SECRET)) {
-    provider = 'RAZORPAY_TEST';
-  } else if (env.PAYMENTS_ENABLED && env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET) {
-    provider = 'RAZORPAY';
-  } else {
-    throw new HttpError(503, 'PAYMENT_PROVIDER_NOT_AVAILABLE', 'No payment provider is available. Configure Razorpay or enable mock payments.');
+  const provider = env.MOCK_PAYMENTS ? 'MOCK' : 'RAZORPAY';
+  if (provider === 'RAZORPAY' && (!env.PAYMENTS_ENABLED || env.NODE_ENV !== 'production')) {
+    // Real provider calls are deliberately blocked in development until a deliberate production configuration is approved.
+    throw new HttpError(503, 'REAL_PAYMENTS_DISABLED', 'Use the mock provider during development. Real payments require a production deployment and compliance sign-off.');
   }
   const intentId = randomUUID();
   const { data: intent, error: insertError } = await supabase().from('payment_intents').insert({
     id: intentId, order_id: order.id, buyer_id: req.user.id, provider,
-    idempotency_key: idempotencyKey, amount_paise: order.upfront_paise, currency: 'INR', status: 'CREATING'
+    idempotency_key: idempotencyKey, amount_paise: order.deposit_paise, currency: 'INR', status: 'CREATING'
   }).select('*').single();
   if (insertError) {
     if (insertError.code === '23505') {
@@ -339,53 +290,10 @@ apiRouter.post('/payments/create-order', requireAuth, requireRole('buyer'), asyn
   }
 
   try {
-    let providerOrder;
-    let keyId;
-    
-    if (provider === 'RAZORPAY_TEST') {
-      // Use test mode
-      providerOrder = await createRazorpayOrder({ 
-        amountPaise: Number(order.upfront_paise), 
-        receipt: intentId, 
-        notes: { portal_order_id: order.id, portal_intent_id: intentId, mode: 'test' },
-        mode: 'test'
-      });
-      keyId = env.RAZORPAY_TEST_KEY_ID;
-    } else if (provider === 'RAZORPAY') {
-      // Use live mode
-      providerOrder = await createRazorpayOrder({ 
-        amountPaise: Number(order.upfront_paise), 
-        receipt: intentId, 
-        notes: { portal_order_id: order.id, portal_intent_id: intentId, mode: 'live' },
-        mode: 'live'
-      });
-      keyId = env.RAZORPAY_KEY_ID;
-    }
-    
-    const { data: updated, error } = await supabase().from('payment_intents').update({ 
-      provider_order_id: providerOrder.id, 
-      status: 'CREATED', 
-      raw_provider_reference: { 
-        receipt: providerOrder.receipt,
-        mode: provider === 'RAZORPAY_TEST' ? 'test' : 'live'
-      } 
-    }).eq('id', intent.id).select('*').single();
-    
+    const providerOrder = await createRazorpayOrder({ amountPaise: Number(order.deposit_paise), receipt: intentId, notes: { portal_order_id: order.id, portal_intent_id: intentId } });
+    const { data: updated, error } = await supabase().from('payment_intents').update({ provider_order_id: providerOrder.id, status: 'CREATED', raw_provider_reference: { receipt: providerOrder.receipt } }).eq('id', intent.id).select('*').single();
     if (error) throw error;
-    
-    res.status(201).json({ 
-      data: { 
-        id: updated.id, 
-        provider: provider === 'RAZORPAY_TEST' ? 'RAZORPAY_TEST' : 'RAZORPAY', 
-        providerOrderId: updated.provider_order_id, 
-        amountPaise: updated.amount_paise, 
-        currency: 'INR', 
-        status: updated.status, 
-        keyId: keyId, 
-        mock: false,
-        mode: provider === 'RAZORPAY_TEST' ? 'test' : 'live'
-      } 
-    });
+    res.status(201).json({ data: { id: updated.id, provider: 'RAZORPAY', providerOrderId: updated.provider_order_id, amountPaise: updated.amount_paise, currency: 'INR', status: updated.status, keyId: env.RAZORPAY_KEY_ID, mock: false } });
   } catch (error) {
     await supabase().from('payment_intents').update({ status: 'FAILED' }).eq('id', intent.id);
     throw error;
@@ -398,11 +306,10 @@ apiRouter.post('/payments/verify', requireAuth, requireRole('buyer'), async (req
   if (error || !intent) throw new HttpError(404, 'PAYMENT_INTENT_NOT_FOUND', 'Payment intent not found.');
   if (intent.provider_order_id !== body.providerOrderId) throw new HttpError(400, 'PAYMENT_ORDER_MISMATCH', 'Payment order does not match this intent.');
   if (intent.status === 'CAPTURED') {
-    const { data: existingOrder } = await supabase().from('orders').select('*').eq('id', intent.order_id).single();
+    const { data: existingOrder } = await supabase().from('orders').select('state').eq('id', intent.order_id).single();
     if (existingOrder?.state === 'ACCEPTED') {
-      const { data: lockedOrder, error: retryError } = await supabase().rpc('transition_order', { p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Idempotent retry: payment already captured.' });
+      const { error: retryError } = await supabase().rpc('transition_order', { p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Idempotent retry: payment already captured.' });
       if (retryError) throw new HttpError(409, 'ORDER_LOCK_RETRY_FAILED', 'Payment is captured, but the order still needs support review.');
-      if (lockedOrder) await postCollectionLedger(supabase(), lockedOrder, req.user.id).catch((e) => logger.error({ err: e, orderId: intent.order_id }, 'collection_ledger_failed'));
     }
     return res.json({ data: { status: 'CAPTURED', orderId: intent.order_id, duplicate: true } });
   }
@@ -412,41 +319,20 @@ apiRouter.post('/payments/verify', requireAuth, requireRole('buyer'), async (req
     const { error: updateError } = await supabase().from('payment_intents').update({ status: 'CAPTURED', raw_provider_reference: { mode: 'DEMO', verifiedAt: new Date().toISOString() } }).eq('id', intent.id);
     if (updateError) throw updateError;
   } else {
-    // Determine mode based on provider
-    const mode = intent.provider === 'RAZORPAY_TEST' ? 'test' : 
-                 intent.provider === 'RAZORPAY' ? 'live' : 'auto';
-    
-    if (!body.paymentId || !body.signature || !verifyCheckoutSignature({ 
-      orderId: intent.provider_order_id, 
-      paymentId: body.paymentId, 
-      signature: body.signature,
-      mode
-    })) {
+    if (!body.paymentId || !body.signature || !verifyCheckoutSignature({ orderId: body.providerOrderId, paymentId: body.paymentId, signature: body.signature })) {
       throw new HttpError(400, 'PAYMENT_SIGNATURE_INVALID', 'Payment signature verification failed.');
     }
-    
-    const payment = await fetchRazorpayPayment(body.paymentId, mode);
+    const payment = await fetchRazorpayPayment(body.paymentId);
     if (payment.order_id !== body.providerOrderId || Number(payment.amount) !== Number(intent.amount_paise) || payment.currency !== 'INR' || payment.status !== 'captured') {
       throw new HttpError(409, 'PAYMENT_NOT_CAPTURED', 'The provider payment does not match the expected amount or is not captured.');
     }
-    
-    const { error: updateError } = await supabase().from('payment_intents').update({ 
-      provider_payment_id: payment.id, 
-      status: 'CAPTURED', 
-      raw_provider_reference: { 
-        paymentId: payment.id, 
-        status: payment.status,
-        mode
-      } 
-    }).eq('id', intent.id);
-    
+    const { error: updateError } = await supabase().from('payment_intents').update({ provider_payment_id: payment.id, status: 'CAPTURED', raw_provider_reference: { paymentId: payment.id, status: payment.status } }).eq('id', intent.id);
     if (updateError) throw updateError;
   }
-  const { data: lockedOrder, error: transitionError } = await supabase().rpc('transition_order', {
+  const { error: transitionError } = await supabase().rpc('transition_order', {
     p_order_id: intent.order_id, p_to_state: 'LOCKED', p_actor_id: req.user.id, p_note: 'Initial payment verified.'
   });
   if (transitionError) throw new HttpError(409, 'ORDER_LOCK_FAILED', 'Payment was verified but the order could not be locked. Contact support with the request ID.');
-  if (lockedOrder) await postCollectionLedger(supabase(), lockedOrder, req.user.id).catch((e) => logger.error({ err: e, orderId: intent.order_id }, 'collection_ledger_failed'));
   res.json({ data: { status: 'CAPTURED', orderId: intent.order_id, orderState: 'LOCKED' }, warning: intent.provider === 'MOCK' ? 'Demo payment only. No money moved.' : undefined });
 });
 
@@ -1044,6 +930,7 @@ apiRouter.get('/orders/:id/timeline', requireAuth, async (req, res) => {
 
 apiRouter.post('/orders/:id/purchased', requireAuth, requireRole('traveller'), async (req, res) => transitionOrder(req, res, 'PURCHASED'));
 apiRouter.post('/orders/:id/landed', requireAuth, requireRole('traveller'), async (req, res) => transitionOrder(req, res, 'LANDED'));
+apiRouter.post('/orders/:id/handover', requireAuth, requireRole('buyer'), async (req, res) => transitionOrder(req, res, 'COMPLETED'));
 apiRouter.post('/orders/:id/dispute', requireAuth, async (req, res) => transitionOrder(req, res, 'DISPUTED'));
 
 // Handover completion is gated by a one-time OTP issued to the buyer. Completion is buyer-authorized,

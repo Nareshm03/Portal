@@ -37,6 +37,7 @@ export const AIRPORTS = {
   },
   GOI: { code: "GOI", city: "Goa", name: "Manohar International" },
   PNQ: { code: "PNQ", city: "Pune", name: "Pune International" },
+  LHR: { code: "LHR", city: "London", name: "Heathrow" },
 } as const;
 
 export type AirportCode = keyof typeof AIRPORTS;
@@ -284,6 +285,7 @@ export interface Conversation {
   unread: boolean;
 }
 
+/** Demo conversations that reference backend conversation IDs. */
 export const conversations: readonly Conversation[] = [
   {
     id: "conv-01",
@@ -299,7 +301,7 @@ export const conversations: readonly Conversation[] = [
     travelerName: "Arjun Shah",
     requestName: "Goyard Saint Louis tote",
     snippet:
-      "The boutique has the GM in black. I’ll send condition photos before I pay.",
+      "The boutique has the GM in black. I'll send condition photos before I pay.",
     timeLabel: "Yesterday",
     unread: false,
   },

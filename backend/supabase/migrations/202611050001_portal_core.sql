@@ -9,6 +9,7 @@ create type public.kyc_status as enum ('NOT_SUBMITTED', 'SUBMITTED', 'PENDING_RE
 create type public.compliance_status as enum ('REVIEW_REQUIRED', 'APPROVED', 'REJECTED');
 create type public.order_state as enum ('ACCEPTED', 'LOCKED', 'PURCHASED', 'LANDED', 'COMPLETED', 'FORFEITED', 'DISPUTED', 'EXPIRED');
 create type public.payment_status as enum ('CREATING', 'CREATED', 'AUTHORIZED', 'CAPTURED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED');
+create type public.request_status as enum ('PENDING_REVIEW', 'OPEN', 'MATCHED', 'CLOSED', 'REJECTED');
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,

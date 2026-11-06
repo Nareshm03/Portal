@@ -128,7 +128,7 @@ export function createMockSupabase(tables = {}) {
 
     chain.delete = () => {
       callLog.delete.push({ table: tableName, filters });
-      // Apply deletion synchronously to the data â€” chain stays thenable for awaiting.
+      // Apply deletion synchronously to the data — chain stays thenable for awaiting.
       if (Array.isArray(response.data)) {
         response.data = response.data.filter((row) => applyFilters([row]).length === 0);
       }
