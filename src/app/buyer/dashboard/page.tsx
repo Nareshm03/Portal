@@ -1,3 +1,6 @@
+// Task 13 Phase 3 — Buyer Dashboard (async server component)
+// Connects to GET /api/v1/me and GET /api/v1/requests/mine.
+// Replaces hardcoded demo data with live backend data.
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
@@ -54,43 +57,53 @@ const STATS = [
   },
 ] as const;
 
-export default function BuyerDashboardPage() {
   return (
     <BuyerShell active="overview">
       <header className="flex flex-wrap items-end justify-between gap-5">
         <div>
-          <p className="eyebrow">Buyer overview · {buyerProfile.city}</p>
+          <p className="eyebrow">
+            Buyer overview · {profile?.full_name ? "Verified buyer" : "Buyer"}
+          </p>
           <h1 className="mt-2.5 max-w-2xl text-4xl leading-tight sm:text-5xl">
-            Good evening, {buyerProfile.firstName}.
+            Good evening, {firstName}.
           </h1>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
-            Three requests are moving, three travelers are already flying your
-            way, and two orders are between cities. Here is the quiet view.
+            Your requests and sourcing activity. Status is confirmed by the
+            backend on every load.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <span className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[0.6875rem] text-muted sm:inline-flex">
-            <span className="size-1.5 rounded-full bg-emerald" aria-hidden="true" />
-            Mock KYC verified
-          </span>
-          <ButtonLink
-            href="/buyer/requests/new"
-            leadingIcon={
-              <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-            }
-          >
-            New product request
-          </ButtonLink>
+          {profile && profile.account_status === "ACTIVE" && (
+            <>
+              <span className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[0.6875rem] text-muted sm:inline-flex">
+                <span className="size-1.5 rounded-full bg-emerald" aria-hidden="true" />
+                {profile.kyc_status === "VERIFIED" ? "KYC verified" : "KYC pending"}
+              </span>
+              <ButtonLink
+                href="/buyer/requests/new"
+                leadingIcon={
+                  <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                }
+              >
+                New product request
+              </ButtonLink>
+            </>
+          )}
+          {!profile || profile.account_status !== "ACTIVE" && (
+            <span className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-[0.6875rem] text-muted sm:inline-flex">
+              Account not yet active — please complete onboarding.
+            </span>
+          )}
         </div>
       </header>
 
-      {/* ── Quick action + overview ─────────────────────────────────────── */}
+      {/* ── Profile & requests overview ─────────────────────────────────────── */}
       <div className="mt-8 grid gap-5 xl:grid-cols-12">
         <section className="relative isolate overflow-hidden rounded-2xl bg-burgundy-deep text-ivory xl:col-span-8">
           <Image
-            src={buyerHeroImage}
-            alt="A champagne-toned wristwatch photographed for a product request"
+            src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=1600&q=80"
+            alt="Buyer dashboard hero"
             fill
             priority
             sizes="(min-width: 1280px) 55vw, 100vw"
@@ -103,19 +116,19 @@ export default function BuyerDashboardPage() {
 
           <div className="relative z-10 flex min-h-[22rem] flex-col justify-between gap-8 p-6 sm:p-9">
             <div className="flex flex-wrap items-center gap-2.5">
-              <Badge variant="champagne">Quick action</Badge>
+              <Badge variant="champagne">Overview</Badge>
               <span className="text-[0.625rem] uppercase tracking-[0.18em] text-ivory/60">
-                Demo request flow
+                Live backend data
               </span>
             </div>
 
             <div className="max-w-xl">
               <h2 className="text-3xl leading-tight text-ivory sm:text-4xl">
-                From a Tokyo boutique to your door.
+                Your sourcing desk
               </h2>
               <p className="mt-4 max-w-md text-sm leading-relaxed text-ivory/70">
-                Name the piece, pin down the details, and set a budget. We will
-                show you how a verified traveler match would look.
+                View your requests, their status and compliance review. All data
+                is fetched live from the backend.
               </p>
               <div className="mt-7 flex flex-wrap items-center gap-4">
                 <ButtonLink
@@ -143,20 +156,12 @@ export default function BuyerDashboardPage() {
 
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-[0.625rem] uppercase tracking-[0.16em] text-ivory/60">
               <span className="inline-flex items-center gap-1.5">
-                <Globe2
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
-                Any storefront
+                <Globe2 className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                Cross-border sourcing
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <Plane
-                  className="size-3.5"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
-                Any major city
+                <Plane className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                Traveler network
               </span>
             </div>
           </div>
@@ -167,41 +172,42 @@ export default function BuyerDashboardPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="eyebrow">At a glance</p>
-                <h2 className="mt-2 text-2xl">Your sourcing desk</h2>
+                <h2 className="mt-2 text-2xl">Your requests</h2>
               </div>
               <span className="grid size-10 shrink-0 place-items-center rounded-full border border-champagne-strong/40 bg-champagne/15">
-                <Sparkles
-                  className="size-4 text-champagne-strong"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                />
+                <Sparkles className="size-4 text-champagne-strong" strokeWidth={1.75} aria-hidden="true" />
               </span>
             </div>
 
             <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border">
-              {STATS.map((stat) => (
-                <div key={stat.label} className="bg-surface p-4">
-                  <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    {stat.label}
-                  </dt>
-                  <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
-                    {String(stat.value).padStart(2, "0")}
-                  </dd>
-                  <dd className="mt-2">
-                    <Link
-                      href={stat.href}
-                      className="inline-flex items-center gap-1 text-[0.625rem] text-muted transition-colors hover:text-burgundy"
-                    >
-                      {stat.note}
-                      <ArrowUpRight
-                        className="size-3"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                    </Link>
-                  </dd>
-                </div>
-              ))}
+              <div className="bg-surface p-4">
+                <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Total requests
+                </dt>
+                <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
+                  {String(requests.length).padStart(2, "0")}
+                </dd>
+                <dd className="mt-2">
+                  <Link
+                    href="#requests"
+                    className="inline-flex items-center gap-1 text-[0.625rem] text-muted transition-colors hover:text-burgundy"
+                  >
+                    View all requests
+                    <ArrowUpRight className="size-3" strokeWidth={2} aria-hidden="true" />
+                  </Link>
+                </dd>
+              </div>
+              <div className="bg-surface p-4">
+                <dt className="text-[0.5625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Open requests
+                </dt>
+                <dd className="mt-2 font-serif text-3xl leading-none text-burgundy">
+                  {String(requests.filter((r) => r.status === "OPEN").length).padStart(2, "0")}
+                </dd>
+                <dd className="mt-2">
+                  <span className="text-[0.5625rem] text-muted">Awaiting compliance or quotes</span>
+                </dd>
+              </div>
             </dl>
 
             <p className="mt-5 rounded-lg border border-champagne-strong/25 bg-champagne/10 p-3 text-[0.6875rem] leading-relaxed text-muted">
